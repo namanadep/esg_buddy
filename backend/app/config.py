@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     openai_api_key: str
     
     # LLM Configuration
-    llm_model: str = "gpt-4-turbo-preview"
+    llm_model: str = "gpt-5-nano"
     embedding_model: str = "text-embedding-3-small"
     
     # Vector Database

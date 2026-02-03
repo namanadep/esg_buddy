@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   CheckSquare, 
-  Filter, 
   Search,
   ChevronDown,
   ChevronRight,
@@ -22,11 +21,7 @@ const Clauses = () => {
   const [clauseDetail, setClauseDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   
-  useEffect(() => {
-    loadClauses()
-  }, [selectedFramework])
-  
-  const loadClauses = async () => {
+  const loadClauses = useCallback(async () => {
     setLoading(true)
     try {
       const framework = selectedFramework === 'all' ? null : selectedFramework
@@ -37,7 +32,11 @@ const Clauses = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [selectedFramework])
+
+  useEffect(() => {
+    loadClauses()
+  }, [loadClauses])
   
   const loadClauseDetail = async (clauseId) => {
     setLoadingDetail(true)

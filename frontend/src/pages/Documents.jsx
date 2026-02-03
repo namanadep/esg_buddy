@@ -8,7 +8,6 @@ import {
   Trash2,
   Play,
   AlertCircle,
-  CheckCircle2,
   Loader2,
   Search
 } from 'lucide-react'

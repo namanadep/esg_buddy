@@ -346,7 +346,7 @@ const ReportDetail = () => {
                               Retrieved Evidence ({clauseDetail.retrieved_evidence.length})
                             </h4>
                             <div className="space-y-3">
-                              {clauseDetail.retrieved_evidence.map((evidence, idx) => (
+                              {clauseDetail.retrieved_evidence.map((evidence) => (
                                 <div
                                   key={evidence.chunk_id}
                                   className="p-4 bg-clay-50 rounded-xl border border-ink-200"

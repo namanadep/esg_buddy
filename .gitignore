@@ -72,3 +72,4 @@ htmlcov/
 # System files
 Thumbs.db
 .DS_Store
+/Company Reports
