@@ -104,11 +104,16 @@ class RuleValidationResult(BaseModel):
 
 
 class LLMEvaluation(BaseModel):
-    """LLM-based clause evaluation"""
+    """LLM-based clause evaluation with agentic reasoning"""
     status: ComplianceStatus
     confidence: float
     explanation: str
     reasoning: Optional[str] = None
+    # Agentic AI fields
+    reasoning_steps: Optional[List[str]] = None  # Chain-of-thought steps
+    reflection: Optional[str] = None  # Self-reflection on reasoning
+    reflection_issues: Optional[List[str]] = None  # Issues found during reflection
+    revised: bool = False  # Whether reasoning was revised after reflection
 
 
 class ClauseEvaluation(BaseModel):

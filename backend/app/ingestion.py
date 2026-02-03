@@ -224,11 +224,18 @@ class EmbeddingGenerator:
             raise
     
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for multiple texts"""
+        """Generate embeddings for multiple texts. Each text must be non-empty and valid."""
+        if not texts:
+            return []
+        # Ensure every item is a non-empty string (API rejects empty/invalid input)
+        cleaned = []
+        for t in texts:
+            s = (t or "").strip() if isinstance(t, str) else str(t or "").strip()
+            cleaned.append(s if s else "(no text)")
         try:
             response = self.client.embeddings.create(
                 model=self.model,
-                input=texts
+                input=cleaned
             )
             return [data.embedding for data in response.data]
         except Exception as e:

@@ -3,6 +3,15 @@ ESGBuddy - Intelligent ESG Compliance Copilot
 Main FastAPI Application
 """
 
+# SQLite fix for ChromaDB on Windows
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
+# Disable ChromaDB telemetry (avoids posthog errors)
+import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -74,29 +83,28 @@ async def startup_event():
     # Ensure directories exist
     settings.ensure_directories()
     
-    # Check if clauses are already parsed
+    # Always parse standards so parsed_clauses is populated for the /clauses API
     stats = vector_store.get_collection_stats()
     logger.info(f"Vector store stats: {stats}")
     
-    if stats['esg_clauses'] == 0:
-        logger.info("No ESG clauses found in vector store. Parsing standards...")
-        # Parse standards in background
-        try:
-            clauses = clause_parser.parse_all_standards()
-            if clauses:
-                parsed_clauses['all'] = clauses
-                # Group by framework
-                for framework in ESGFramework:
-                    framework_clauses = [c for c in clauses if c.framework == framework]
-                    parsed_clauses[framework.value] = framework_clauses
-                
-                # Add to vector store
+    try:
+        clauses = clause_parser.parse_all_standards()
+        if clauses:
+            parsed_clauses['all'] = clauses
+            for framework in ESGFramework:
+                framework_clauses = [c for c in clauses if c.framework == framework]
+                parsed_clauses[framework.value] = framework_clauses
+            logger.info(f"Parsed {len(clauses)} clauses for API")
+            
+            # Only add to vector store if not already indexed (avoids re-embedding)
+            if stats['esg_clauses'] == 0:
+                logger.info("Indexing clauses into vector store...")
                 vector_store.add_clauses(clauses)
-                logger.info(f"Parsed and indexed {len(clauses)} clauses")
-        except Exception as e:
-            logger.error(f"Error parsing standards on startup: {e}")
-    else:
-        logger.info("ESG clauses already indexed in vector store")
+                logger.info(f"Indexed {len(clauses)} clauses into vector store")
+            else:
+                logger.info("Vector store already has clauses, skipping re-index")
+    except Exception as e:
+        logger.error(f"Error parsing standards on startup: {e}")
 
 
 @app.get("/")

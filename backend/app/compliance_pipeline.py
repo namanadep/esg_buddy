@@ -175,40 +175,44 @@ class CompliancePipeline:
         evidence: List[RetrievedEvidence]
     ) -> LLMEvaluation:
         """
-        Use GPT-4 to evaluate clause compliance
+        Agentic LLM evaluation with Chain-of-Thought and Self-Reflection
+        
+        Process:
+        1. Chain-of-Thought: LLM thinks step-by-step
+        2. Self-Reflection: LLM reviews its own reasoning
+        3. Revision (if needed): LLM corrects identified issues
         
         Args:
             clause: ESG clause to evaluate
             evidence: Retrieved evidence chunks
         
         Returns:
-            LLM evaluation result
+            LLM evaluation result with reasoning traces
         """
-        # Construct prompt
-        prompt = self._build_llm_prompt(clause, evidence)
-        
         try:
-            response = self.llm_client.chat.completions.create(
-                model=self.llm_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert ESG compliance analyst. Evaluate whether the provided evidence supports the given ESG clause requirement. Be precise and objective."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.1,  # Low temperature for consistency
-                response_format={"type": "json_object"}
-            )
+            # Step 1: Chain-of-Thought Reasoning
+            cot_result = self._chain_of_thought_reasoning(clause, evidence)
             
-            # Parse response
-            response_text = response.choices[0].message.content
-            result = json.loads(response_text)
+            # Step 2: Self-Reflection
+            reflection_result = self._self_reflection(clause, evidence, cot_result)
             
-            # Map status string to enum
+            # Step 3: Decide if revision is needed
+            if reflection_result.get("needs_revision", False):
+                logger.info(f"Reflection identified issues for {clause.clause_id}, revising...")
+                # Revise the analysis
+                final_result = self._revise_reasoning(
+                    clause, 
+                    evidence, 
+                    cot_result, 
+                    reflection_result
+                )
+                revised = True
+            else:
+                # Use original analysis
+                final_result = cot_result
+                revised = False
+            
+            # Map status
             status_map = {
                 "supported": ComplianceStatus.SUPPORTED,
                 "partial": ComplianceStatus.PARTIAL,
@@ -217,25 +221,233 @@ class CompliancePipeline:
             }
             
             status = status_map.get(
-                result.get("status", "not_supported").lower(),
+                final_result.get("status", "not_supported").lower(),
                 ComplianceStatus.NOT_SUPPORTED
             )
             
             return LLMEvaluation(
                 status=status,
-                confidence=float(result.get("confidence", 0.5)),
-                explanation=result.get("explanation", ""),
-                reasoning=result.get("reasoning", "")
+                confidence=float(final_result.get("confidence", 0.5)),
+                explanation=final_result.get("explanation", ""),
+                reasoning=final_result.get("detailed_reasoning", ""),
+                reasoning_steps=cot_result.get("reasoning_steps", []),
+                reflection=reflection_result.get("reflection", ""),
+                reflection_issues=reflection_result.get("issues", []),
+                revised=revised
             )
             
         except Exception as e:
-            logger.error(f"LLM evaluation error: {e}")
+            logger.error(f"Agentic LLM evaluation error: {e}")
             return LLMEvaluation(
                 status=ComplianceStatus.NOT_SUPPORTED,
                 confidence=0.0,
                 explanation=f"LLM evaluation failed: {str(e)}",
                 reasoning=""
             )
+    
+    def _chain_of_thought_reasoning(
+        self,
+        clause: ESGClause,
+        evidence: List[RetrievedEvidence]
+    ) -> Dict[str, Any]:
+        """
+        Step 1: Chain-of-Thought reasoning
+        LLM thinks through the problem step-by-step
+        """
+        evidence_text = "\n\n".join([
+            f"[Evidence {i+1}] (Page {ev.page_number}, Similarity: {ev.similarity_score:.2f})\n{ev.text}"
+            for i, ev in enumerate(evidence[:5])
+        ])
+        
+        prompt = f"""You are an expert ESG compliance analyst. Analyze this ESG clause against the provided evidence using step-by-step reasoning.
+
+**ESG Clause:**
+- Framework: {clause.framework.value}
+- Title: {clause.title}
+- Requirement: {clause.description}
+- Required Evidence Type: {', '.join([et.value for et in clause.required_evidence_type])}
+- Mandatory: {clause.mandatory}
+
+**Retrieved Evidence:**
+{evidence_text}
+
+**Task: Think step-by-step through the following:**
+
+1. **Evidence Quality**: Assess the relevance and quality of each evidence piece
+2. **Requirement Matching**: Does the evidence address all aspects of the requirement?
+3. **Evidence Type**: Does the evidence match the required type (numeric, descriptive, policy, etc.)?
+4. **Completeness**: Are there any gaps in the evidence?
+5. **Compliance Assessment**: Based on the above, what is the compliance status?
+
+**Response Format (JSON):**
+{{
+    "reasoning_steps": [
+        "Step 1: Evidence Quality - ...",
+        "Step 2: Requirement Matching - ...",
+        "Step 3: Evidence Type - ...",
+        "Step 4: Completeness - ...",
+        "Step 5: Compliance Assessment - ..."
+    ],
+    "status": "supported | partial | not_supported | inferred",
+    "confidence": 0.0-1.0,
+    "explanation": "Concise explanation (2-3 sentences)",
+    "detailed_reasoning": "Comprehensive reasoning with evidence references"
+}}
+
+Think carefully and be thorough. Each step should build on the previous one."""
+
+        response = self.llm_client.chat.completions.create(
+            model=self.llm_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert ESG compliance analyst who thinks step-by-step and provides detailed reasoning."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        
+        return json.loads(response.choices[0].message.content)
+    
+    def _self_reflection(
+        self,
+        clause: ESGClause,
+        evidence: List[RetrievedEvidence],
+        initial_reasoning: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Step 2: Self-Reflection
+        LLM reviews its own reasoning and identifies potential issues
+        """
+        prompt = f"""You are a critical reviewer of ESG compliance analysis. Review the following analysis for potential issues or errors.
+
+**Original ESG Clause:**
+- Framework: {clause.framework.value}
+- Title: {clause.title}
+- Requirement: {clause.description}
+
+**Initial Analysis:**
+- Status: {initial_reasoning.get('status')}
+- Confidence: {initial_reasoning.get('confidence')}
+- Reasoning Steps: {json.dumps(initial_reasoning.get('reasoning_steps', []), indent=2)}
+- Explanation: {initial_reasoning.get('explanation')}
+
+**Your Task: Critically evaluate this analysis:**
+
+1. **Logical Consistency**: Are the reasoning steps logically sound?
+2. **Evidence Coverage**: Did the analysis consider all relevant evidence?
+3. **Bias Check**: Are there any assumptions or biases in the reasoning?
+4. **Completeness**: Did the analysis address all aspects of the clause requirement?
+5. **Alternative Interpretations**: Could the evidence be interpreted differently?
+6. **Confidence Calibration**: Is the confidence score appropriate for the evidence quality?
+
+**Response Format (JSON):**
+{{
+    "reflection": "Overall assessment of the reasoning quality",
+    "issues": [
+        "Issue 1: description",
+        "Issue 2: description"
+    ],
+    "strengths": [
+        "Strength 1: description",
+        "Strength 2: description"
+    ],
+    "needs_revision": true/false,
+    "revision_suggestions": "If revision needed, what should be reconsidered?"
+}}
+
+Be thorough and critical. Identify any weaknesses in the reasoning."""
+
+        response = self.llm_client.chat.completions.create(
+            model=self.llm_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a critical reviewer who identifies flaws and inconsistencies in ESG compliance analysis."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        
+        return json.loads(response.choices[0].message.content)
+    
+    def _revise_reasoning(
+        self,
+        clause: ESGClause,
+        evidence: List[RetrievedEvidence],
+        initial_reasoning: Dict[str, Any],
+        reflection: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Step 3: Revision (if needed)
+        LLM revises its analysis based on identified issues
+        """
+        evidence_text = "\n\n".join([
+            f"[Evidence {i+1}] (Page {ev.page_number}, Similarity: {ev.similarity_score:.2f})\n{ev.text}"
+            for i, ev in enumerate(evidence[:5])
+        ])
+        
+        prompt = f"""You previously analyzed an ESG clause, and a critical review identified some issues. Please revise your analysis.
+
+**ESG Clause:**
+- Framework: {clause.framework.value}
+- Title: {clause.title}
+- Requirement: {clause.description}
+
+**Evidence:**
+{evidence_text}
+
+**Your Initial Analysis:**
+- Status: {initial_reasoning.get('status')}
+- Confidence: {initial_reasoning.get('confidence')}
+- Reasoning: {initial_reasoning.get('detailed_reasoning')}
+
+**Issues Identified by Reviewer:**
+{json.dumps(reflection.get('issues', []), indent=2)}
+
+**Revision Suggestions:**
+{reflection.get('revision_suggestions', 'None')}
+
+**Task: Provide a revised analysis that addresses these issues.**
+
+**Response Format (JSON):**
+{{
+    "status": "supported | partial | not_supported | inferred",
+    "confidence": 0.0-1.0,
+    "explanation": "Revised explanation (2-3 sentences)",
+    "detailed_reasoning": "Revised comprehensive reasoning",
+    "changes_made": "What was changed and why"
+}}
+
+Address the identified issues and provide a more accurate analysis."""
+
+        response = self.llm_client.chat.completions.create(
+            model=self.llm_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert ESG analyst who revises analysis based on critical feedback."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        
+        return json.loads(response.choices[0].message.content)
     
     def _build_llm_prompt(
         self,

@@ -6,12 +6,14 @@ A full-stack AI web application that performs clause-level ESG compliance verifi
 
 ## 🌟 Overview
 
-ESGBuddy automates ESG compliance verification through:
+ESGBuddy automates ESG compliance verification through **Agentic AI**:
 
 1. **Semantic Retrieval** - Vector embeddings find relevant evidence in documents
-2. **LLM Analysis** - GPT-4 evaluates compliance with expert reasoning
-3. **Rule Validation** - Deterministic checks validate numeric, temporal, and structural requirements
-4. **Accuracy Measurement** - Comprehensive metrics track system performance
+2. **Chain-of-Thought Reasoning** - LLM thinks step-by-step through compliance analysis
+3. **Self-Reflection** - AI critically reviews its own reasoning for errors
+4. **Adaptive Revision** - System corrects identified issues automatically
+5. **Rule Validation** - Deterministic checks validate numeric, temporal, and structural requirements
+6. **Accuracy Measurement** - Comprehensive metrics track system performance
 
 ## 🎯 Key Features
 
@@ -29,12 +31,16 @@ ESGBuddy automates ESG compliance verification through:
 - Structured clause representation with validation rules
 - Keyword and evidence type inference
 
-### Compliance Evaluation Pipeline
+### Agentic Compliance Evaluation Pipeline
 
 - **Step 1**: Semantic retrieval (Top-K evidence chunks)
-- **Step 2**: LLM evaluation (GPT-4 reasoning)
+- **Step 2a**: Chain-of-Thought reasoning (explicit step-by-step analysis)
+- **Step 2b**: Self-Reflection (critical review of reasoning)
+- **Step 2c**: Revision (if issues identified)
 - **Step 3**: Rule validation (deterministic checks)
 - **Step 4**: Final decision (LLM + rules combined)
+
+**📖 See [AGENTIC_AI.md](AGENTIC_AI.md) for detailed documentation.**
 
 ### Accuracy Measurement
 

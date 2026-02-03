@@ -196,7 +196,7 @@ class VectorStore:
     def add_clauses(
         self, 
         clauses: List[ESGClause],
-        batch_size: int = 100
+        batch_size: int = 50
     ) -> int:
         """
         Add ESG clauses to vector store
@@ -214,20 +214,29 @@ class VectorStore:
         clauses_without_embeddings = [c for c in clauses if c.embedding is None]
         if clauses_without_embeddings:
             logger.info(f"Generating embeddings for {len(clauses_without_embeddings)} clauses")
-            descriptions = [c.description for c in clauses_without_embeddings]
             
-            for i in range(0, len(descriptions), batch_size):
-                batch_descriptions = descriptions[i:i+batch_size]
+            def sanitize_for_embedding(text: str, max_chars: int = 8000) -> str:
+                """Ensure text is valid for OpenAI embeddings API."""
+                if text is None or not isinstance(text, str):
+                    return "(no description)"
+                s = str(text).strip()
+                if not s:
+                    return "(no description)"
+                return s[:max_chars] if len(s) > max_chars else s
+            
+            for i in range(0, len(clauses_without_embeddings), batch_size):
+                batch = clauses_without_embeddings[i:i+batch_size]
+                batch_descriptions = [sanitize_for_embedding(c.description) for c in batch]
                 batch_embeddings = self.embedding_generator.generate_embeddings_batch(batch_descriptions)
                 
                 for j, embedding in enumerate(batch_embeddings):
-                    clauses_without_embeddings[i+j].embedding = embedding
+                    batch[j].embedding = embedding
         
-        # Add to ChromaDB
+        # Add to ChromaDB (use unique id per clause to avoid duplicate-id errors)
         for i in range(0, len(clauses), batch_size):
             batch = clauses[i:i+batch_size]
             
-            ids = [c.clause_id for c in batch]
+            ids = [f"{c.clause_id}_{i + j}" for j, c in enumerate(batch)]
             embeddings = [c.embedding for c in batch]
             documents = [c.description for c in batch]
             metadatas = [
@@ -237,7 +246,8 @@ class VectorStore:
                     "title": c.title,
                     "mandatory": c.mandatory,
                     "evidence_types": ",".join([et.value for et in c.required_evidence_type]),
-                    "keywords": ",".join(c.keywords)
+                    "keywords": ",".join(c.keywords),
+                    "clause_id": c.clause_id,
                 }
                 for c in batch
             ]

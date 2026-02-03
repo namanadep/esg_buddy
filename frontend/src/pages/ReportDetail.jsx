@@ -82,7 +82,17 @@ const ReportDetail = () => {
             status: 'supported',
             confidence: 0.85,
             explanation: 'The evidence clearly demonstrates compliance with this requirement.',
-            reasoning: 'Found relevant disclosures on pages 24-26 that explicitly address all aspects of this clause.'
+            reasoning: 'Found relevant disclosures on pages 24-26 that explicitly address all aspects of this clause.',
+            reasoning_steps: [
+              'Step 1: Evidence Quality - All evidence pieces are directly relevant to the clause requirement with high similarity scores (>90%).',
+              'Step 2: Requirement Matching - The evidence explicitly addresses emissions reporting, scope coverage, and quantification methodology as required.',
+              'Step 3: Evidence Type - Evidence includes both descriptive policy information and numeric data, matching required types.',
+              'Step 4: Completeness - All aspects of the requirement are covered: Scope 1, 2, and 3 emissions with proper documentation.',
+              'Step 5: Compliance Assessment - Based on comprehensive evidence coverage, the company demonstrates full compliance with this clause.'
+            ],
+            reflection: 'The initial analysis is thorough and well-supported. Evidence coverage is strong across all requirement dimensions. Confidence score of 0.85 is appropriately calibrated given the clear documentation found.',
+            reflection_issues: [],
+            revised: false
           },
           retrieved_evidence: [
             {
@@ -328,6 +338,11 @@ const ReportDetail = () => {
                             <h4 className="font-semibold text-ink-900 mb-3 flex items-center">
                               <Zap className="w-4 h-4 mr-2 text-forest-600" />
                               AI Analysis
+                              {clauseDetail.llm_evaluation.revised && (
+                                <span className="ml-3 px-2 py-1 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full">
+                                  REVISED
+                                </span>
+                              )}
                             </h4>
                             <div className="p-4 bg-forest-50 rounded-xl border border-forest-200">
                               <p className="text-sm text-ink-700 leading-relaxed mb-3">
@@ -338,6 +353,57 @@ const ReportDetail = () => {
                               </p>
                             </div>
                           </div>
+                          
+                          {/* Chain-of-Thought Reasoning */}
+                          {clauseDetail.llm_evaluation.reasoning_steps && clauseDetail.llm_evaluation.reasoning_steps.length > 0 && (
+                            <div>
+                              <h4 className="font-semibold text-ink-900 mb-3 flex items-center">
+                                <Zap className="w-4 h-4 mr-2 text-forest-600" />
+                                Chain-of-Thought Reasoning
+                              </h4>
+                              <div className="space-y-2">
+                                {clauseDetail.llm_evaluation.reasoning_steps.map((step, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="p-3 bg-blue-50 rounded-lg border border-blue-200"
+                                  >
+                                    <p className="text-sm text-ink-700 leading-relaxed">
+                                      {step}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Self-Reflection */}
+                          {clauseDetail.llm_evaluation.reflection && (
+                            <div>
+                              <h4 className="font-semibold text-ink-900 mb-3 flex items-center">
+                                <Zap className="w-4 h-4 mr-2 text-forest-600" />
+                                Self-Reflection
+                              </h4>
+                              <div className="p-4 bg-purple-50 rounded-xl border border-purple-200 space-y-3">
+                                <p className="text-sm text-ink-700 leading-relaxed">
+                                  <strong>Critical Review:</strong> {clauseDetail.llm_evaluation.reflection}
+                                </p>
+                                
+                                {clauseDetail.llm_evaluation.reflection_issues && clauseDetail.llm_evaluation.reflection_issues.length > 0 && (
+                                  <div>
+                                    <p className="text-xs font-semibold text-purple-700 mb-2">Issues Identified:</p>
+                                    <ul className="space-y-1">
+                                      {clauseDetail.llm_evaluation.reflection_issues.map((issue, idx) => (
+                                        <li key={idx} className="text-sm text-ink-600 flex items-start">
+                                          <span className="mr-2">•</span>
+                                          <span>{issue}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
                           
                           {/* Evidence */}
                           <div>
