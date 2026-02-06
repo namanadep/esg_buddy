@@ -33,7 +33,7 @@ from app.models import (
 )
 from app.config import settings
 from app.ingestion import DocumentProcessor
-from app.clause_parser import ClauseParser
+from app.clause_parser_enhanced import EnhancedClauseParser
 from app.vector_store import VectorStore
 from app.compliance_pipeline import CompliancePipeline
 from app.accuracy import AccuracyEvaluator
@@ -65,7 +65,9 @@ app.add_middleware(
 vector_store = VectorStore()
 compliance_pipeline = CompliancePipeline()
 accuracy_evaluator = AccuracyEvaluator()
-clause_parser = ClauseParser()
+# Enhanced parser handles subdirectories and has LLM-based parsing option
+# Controlled by USE_LLM_PARSING in .env (default: False = regex, True = LLM)
+clause_parser = EnhancedClauseParser(use_llm=settings.use_llm_parsing)
 
 # In-memory storage (replace with database in production)
 documents_metadata = {}
@@ -544,21 +546,27 @@ async def get_benchmark_stats():
 # ============= System Management =============
 
 @app.post("/system/reparse-standards")
-async def reparse_standards():
+async def reparse_standards(use_llm: bool = False):
     """
     Reparse all ESG standards and update the vector store
+    
+    Args:
+        use_llm: Set to true to use LLM-based parsing (more accurate, uses tokens)
     
     Use this when standards are updated
     """
     try:
-        logger.info("Reparsing ESG standards")
+        logger.info(f"Reparsing ESG standards (LLM parsing: {use_llm})")
         
         # Clear existing clauses
         vector_store.clear_clauses()
         parsed_clauses.clear()
         
+        # Create parser with specified mode
+        parser = EnhancedClauseParser(use_llm=use_llm)
+        
         # Parse standards
-        clauses = clause_parser.parse_all_standards()
+        clauses = parser.parse_all_standards()
         
         if clauses:
             parsed_clauses['all'] = clauses
