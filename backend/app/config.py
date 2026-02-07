@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # Application
     environment: str = "development"
     log_level: str = "INFO"
-    # Comma-separated frameworks to parse on startup (e.g. "BRSR" or "BRSR,GRI,SASB,TCFD")
+    # Comma-separated frameworks to parse on startup (e.g. "BRSR" or "BRSR,TCFD")
     parse_frameworks: str = "BRSR"
     
     # Chunking Configuration

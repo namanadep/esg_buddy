@@ -8,7 +8,7 @@ echo Starting ESGBuddy...
 echo.
 
 REM Terminal 1: Backend (Python venv + Uvicorn)
-start "ESGBuddy Backend" cmd /k "cd /d "%ROOT%\backend" && call venv\Scripts\activate.bat && echo Backend running at http://localhost:8000 && echo API docs: http://localhost:8000/docs && echo. && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "ESGBuddy Backend" cmd /k "cd /d "%ROOT%\backend" && call venv\Scripts\activate.bat && echo Backend running at http://localhost:8000 && echo API docs: http://localhost:8000/docs && echo. && echo To stop: press Ctrl+C twice, or run stop_esgbuddy.bat && echo. && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 REM Wait a moment so backend starts first
 timeout /t 3 /nobreak >nul
@@ -22,4 +22,3 @@ echo   - ESGBuddy Backend  (port 8000)
 echo   - ESGBuddy Frontend (port 3000)
 echo.
 echo Use stop_esgbuddy.bat to stop both.
-pause

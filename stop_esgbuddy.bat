@@ -1,21 +1,10 @@
 @echo off
-REM ESGBuddy - Stop Backend and Frontend (kill processes on ports 8000 and 3000)
+REM ESGBuddy - Stop Backend and Frontend (kill processes on ports 8000 and 3000 and close their terminal windows)
 setlocal
+set "ROOT=%~dp0"
+set "ROOT=%ROOT:~0,-1%"
 echo Stopping ESGBuddy...
 echo.
-
-REM Find and kill process on port 8000 (Backend)
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING') do (
-    echo Killing backend (PID %%a)...
-    taskkill /F /PID %%a 2>nul
-)
-
-REM Find and kill process on port 3000 (Frontend - Vite)
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3000 ^| findstr LISTENING') do (
-    echo Killing frontend (PID %%a)...
-    taskkill /F /PID %%a 2>nul
-)
-
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\stop_esgbuddy.ps1"
 echo.
 echo ESGBuddy stopped.
-pause
