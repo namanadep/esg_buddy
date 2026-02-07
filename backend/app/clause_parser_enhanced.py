@@ -59,8 +59,9 @@ class EnhancedClauseParser:
             
             logger.info(f"Parsing {framework.value} standards from {framework_dir}")
             
-            # Find all PDFs recursively
-            pdf_files = list(framework_dir.rglob("*.pdf")) + list(framework_dir.rglob("*.PDF"))
+            # Find all PDFs recursively (dedupe: on Windows *.pdf and *.PDF match the same files)
+            pdf_files = list({p.resolve() for p in framework_dir.rglob("*.pdf")} | {p.resolve() for p in framework_dir.rglob("*.PDF")})
+            pdf_files = [Path(p) for p in sorted(str(x) for x in pdf_files)]
             logger.info(f"Found {len(pdf_files)} PDF files for {framework.value}")
             
             for pdf_path in pdf_files:
@@ -160,7 +161,7 @@ class EnhancedClauseParser:
                         "content": prompt
                     }
                 ],
-                temperature=0.1,
+                temperature=1,  # gpt-5-nano only supports default (1); 0.1 causes 400
                 response_format={"type": "json_object"}
             )
             
