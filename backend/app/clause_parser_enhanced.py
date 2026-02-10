@@ -102,6 +102,21 @@ class EnhancedClauseParser:
                     essential_files.append(pdf)
         return essential_files
     
+    def _filter_essential_sasb_files(self, pdf_files: List[Path]) -> List[Path]:
+        """Filter SASB PDFs to only 3-4 most common/relevant industry standards."""
+        # Select most universal/common standards:
+        essential_names = [
+            'commercial-banks-standard_en-gb.pdf',  # Financials - very common
+            'software-and-it-services-standard_en-gb.pdf',  # Technology - very common
+            'biotechnology-and-pharmaceuticals-standard_en-gb.pdf',  # Healthcare - important
+            'electrical-and-electronic-equipment-standard_en-gb.pdf',  # Resource Transformation - common
+        ]
+        essential_files = []
+        for pdf in pdf_files:
+            if pdf.name in essential_names:
+                essential_files.append(pdf)
+        return essential_files
+    
     def parse_framework(self, framework: ESGFramework) -> List[ESGClause]:
         """Parse only one framework (e.g. for incremental add when others already in DB)."""
         all_clauses = []
@@ -118,6 +133,12 @@ class EnhancedClauseParser:
             original_count = len(pdf_files)
             pdf_files = self._filter_essential_gri_files(pdf_files)
             logger.info(f"Filtered GRI to {len(pdf_files)} essential standards (from {original_count} total)")
+        
+        # For SASB, filter to only 3-4 most common/relevant standards (too many industry-specific ones)
+        if framework == ESGFramework.SASB:
+            original_count = len(pdf_files)
+            pdf_files = self._filter_essential_sasb_files(pdf_files)
+            logger.info(f"Filtered SASB to {len(pdf_files)} essential standards (from {original_count} total)")
         
         logger.info(f"Found {len(pdf_files)} PDF files for {framework.value}")
         for pdf_path in pdf_files:
@@ -317,7 +338,7 @@ class EnhancedClauseParser:
                 
                 # Delay and garbage collection between chunks
                 if i < len(chunks) - 1:
-                    time.sleep(2.5)  # Increased to 2.5s for better memory recovery
+                    time.sleep(0.5)  # Reduced delay for faster parsing with gpt-4o-mini
                     gc.collect()
                     logger.info(f"Memory cleared, waiting before next chunk...")
                     

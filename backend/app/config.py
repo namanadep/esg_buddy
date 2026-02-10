@@ -15,9 +15,9 @@ class Settings(BaseSettings):
     openai_api_key: str
     
     # LLM Configuration
-    llm_model: str = "gpt-5-nano"
+    llm_model: str = "gpt-4o-mini"  # Faster and more accurate than gpt-5-nano
     embedding_model: str = "text-embedding-3-small"
-    use_llm_parsing: bool = False  # LLM parsing disabled for memory efficiency (uses regex instead)
+    use_llm_parsing: bool = True  # Enabled for SASB parsing
     
     # Vector Database
     chroma_persist_directory: str = "./data/chroma_db"
@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
     # Comma-separated frameworks to parse on startup (e.g. "BRSR,GRI,TCFD")
-    parse_frameworks: str = "BRSR,GRI,TCFD"
+    parse_frameworks: str = "BRSR,GRI,TCFD,SASB"  # All frameworks enabled
     # Frameworks to always re-parse on startup (never load from DB). e.g. "GRI"
-    reparse_frameworks_on_startup: str = "GRI"  # Only GRI reparses; BRSR and TCFD load from DB
+    reparse_frameworks_on_startup: str = "SASB"  # Only SASB reparses; others load from DB
     
     # Chunking Configuration
     chunk_size: int = 512
