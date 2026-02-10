@@ -7,6 +7,7 @@ import chromadb
 from chromadb.config import Settings
 from typing import List, Dict, Any, Optional, Tuple
 import logging
+import gc
 from pathlib import Path
 
 from app.models import DocumentChunk, ESGClause, RetrievedEvidence
@@ -196,7 +197,7 @@ class VectorStore:
     def add_clauses(
         self, 
         clauses: List[ESGClause],
-        batch_size: int = 50
+        batch_size: int = 20  # Reduced from 50 to reduce memory usage
     ) -> int:
         """
         Add ESG clauses to vector store
@@ -231,6 +232,12 @@ class VectorStore:
                 
                 for j, embedding in enumerate(batch_embeddings):
                     batch[j].embedding = embedding
+                
+                # Clear batch data after processing to free memory
+                del batch_descriptions
+                del batch_embeddings
+                if (i // batch_size) % 5 == 0:  # GC every 5 batches
+                    gc.collect()
         
         # Add to ChromaDB (use unique id per clause to avoid duplicate-id errors)
         for i in range(0, len(clauses), batch_size):
@@ -258,9 +265,17 @@ class VectorStore:
                 documents=documents,
                 metadatas=metadatas
             )
+            
+            # Clear batch data after adding to DB
+            del ids, embeddings, documents, metadatas, batch
+            if (i // batch_size) % 3 == 0:  # GC every 3 batches
+                gc.collect()
         
-        logger.info(f"Successfully added {len(clauses)} clauses to vector store")
-        return len(clauses)
+        total_added = len(clauses)
+        logger.info(f"Successfully added {total_added} clauses to vector store")
+        del clauses  # Clear clauses list after processing
+        gc.collect()
+        return total_added
     
     def get_clause(self, clause_id: str) -> Optional[Dict[str, Any]]:
         """Get a specific clause by ID"""

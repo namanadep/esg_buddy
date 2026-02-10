@@ -4,6 +4,8 @@ LLM-powered intelligent parsing of ESG standards with fallback to regex
 """
 
 import re
+import time
+import gc
 import fitz  # PyMuPDF
 from typing import List, Dict, Optional, Tuple, Any
 import logging
@@ -75,6 +77,31 @@ class EnhancedClauseParser:
         logger.info(f"Total parsed: {len(all_clauses)} clauses from all standards")
         return all_clauses
     
+    def parse_framework(self, framework: ESGFramework) -> List[ESGClause]:
+        """Parse only one framework (e.g. for incremental add when others already in DB)."""
+        all_clauses = []
+        framework_dir = self.standards_dir / framework.value
+        if not framework_dir.exists():
+            logger.warning(f"{framework.value} directory not found: {framework_dir}")
+            return []
+        logger.info(f"Parsing {framework.value} standards from {framework_dir}")
+        pdf_files = list({p.resolve() for p in framework_dir.rglob("*.pdf")} | {p.resolve() for p in framework_dir.rglob("*.PDF")})
+        pdf_files = [Path(p) for p in sorted(str(x) for x in pdf_files)]
+        logger.info(f"Found {len(pdf_files)} PDF files for {framework.value}")
+        for pdf_path in pdf_files:
+            try:
+                clauses = self._parse_standard_document(pdf_path, framework)
+                all_clauses.extend(clauses)
+                logger.info(f"Parsed {len(clauses)} clauses from {pdf_path.name}")
+                # Clear clauses list after extending to free memory
+                del clauses
+                gc.collect()
+            except Exception as e:
+                logger.error(f"Error parsing {pdf_path.name}: {e}")
+        logger.info(f"Total parsed for {framework.value}: {len(all_clauses)} clauses")
+        del pdf_files  # Clear PDF list
+        return all_clauses
+    
     def _parse_standard_document(
         self, 
         pdf_path: Path, 
@@ -108,19 +135,27 @@ class EnhancedClauseParser:
         return self._regex_parse_document(text, pdf_path, framework)
     
     def _extract_pdf_text(self, pdf_path: Path) -> Tuple[str, int]:
-        """Extract clean text from PDF"""
+        """Extract clean text from PDF (memory-efficient: process page-by-page)"""
         try:
             doc = fitz.open(str(pdf_path))
             text_parts = []
+            page_count = len(doc)
             
-            for page in doc:
+            # Process pages one at a time to reduce memory
+            for page_num in range(page_count):
+                page = doc[page_num]
                 page_text = page.get_text("text")
                 if page_text.strip():
                     text_parts.append(page_text)
+                # Clear page object immediately
+                del page
             
-            page_count = len(doc)  # Get count before closing
             doc.close()
+            del doc
+            gc.collect()  # Force garbage collection
+            
             full_text = "\n\n".join(text_parts)
+            del text_parts  # Clear list after joining
             return full_text, page_count
             
         except Exception as e:
@@ -129,6 +164,54 @@ class EnhancedClauseParser:
     
     # ============= LLM-Based Parsing =============
     
+    def _split_text_into_chunks(
+        self,
+        text: str,
+        chunk_size: int = 40000,  # Reduced from 55k to 40k for memory safety
+        overlap: int = 3000  # Reduced overlap for memory safety
+    ) -> List[str]:
+        """Split long text into overlapping chunks, breaking at paragraph boundaries when possible."""
+        if len(text) <= chunk_size:
+            return [text] if text.strip() else []
+        chunks = []
+        start = 0
+        prev_start = -1  # Track previous start to detect infinite loops
+        max_iterations = len(text) // (chunk_size - overlap) + 10  # Fail-safe limit
+        iteration = 0
+        
+        while start < len(text) and iteration < max_iterations:
+            # Prevent infinite loop
+            if start == prev_start:
+                logger.error(f"Infinite loop detected in chunking at position {start}. Breaking.")
+                break
+            prev_start = start
+            iteration += 1
+            
+            end = min(start + chunk_size, len(text))
+            chunk = text[start:end]
+            # Prefer to end at a paragraph (double newline) to avoid cutting clauses
+            if end < len(text) and len(chunk) > overlap:
+                last_para = chunk.rfind("\n\n", len(chunk) // 2, len(chunk))
+                if last_para > 0:
+                    chunk = chunk[: last_para + 1]
+                    end = start + len(chunk)
+            chunks.append(chunk)
+            
+            # Ensure we always make progress
+            new_start = end - overlap
+            if new_start <= start:
+                # If we're not making progress, force advancement
+                new_start = start + max(1, chunk_size - overlap)
+            start = new_start
+            
+            if start >= len(text):
+                break
+        
+        if iteration >= max_iterations:
+            logger.warning(f"Chunking hit iteration limit at {iteration}. May have incomplete chunks.")
+        
+        return chunks
+    
     def _llm_parse_document(
         self,
         text: str,
@@ -136,44 +219,85 @@ class EnhancedClauseParser:
         framework: ESGFramework
     ) -> List[ESGClause]:
         """
-        Use LLM to intelligently extract clauses from the standard document
-        
-        This is more accurate than regex for complex/varying formats
+        Use LLM to intelligently extract clauses from the standard document.
+        Memory-optimized: process chunks one at a time and clear intermediate data.
         """
-        # Truncate text if too long (to fit in context window)
-        max_chars = 120000  # ~30k tokens
-        if len(text) > max_chars:
-            logger.info(f"Document too long ({len(text)} chars), truncating to {max_chars}")
-            text = text[:max_chars]
-        
-        prompt = self._build_parsing_prompt(text, pdf_path, framework)
-        
-        try:
-            response = self.llm_client.chat.completions.create(
-                model=self.llm_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": f"You are an expert at extracting structured compliance requirements from {framework.value} ESG standard documents."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=1,  # gpt-5-nano only supports default (1); 0.1 causes 400
-                response_format={"type": "json_object"}
+        max_chars_per_call = 45000  # Reduced from 60k to 45k for memory safety
+        chunks = self._split_text_into_chunks(
+            text,
+            chunk_size=40000,  # Reduced from 55k to 40k
+            overlap=3000  # Reduced from 5k to 3k for memory safety
+        )
+        if len(chunks) > 1:
+            logger.info(
+                f"Document long ({len(text)} chars), splitting into {len(chunks)} chunks for LLM parsing"
             )
+        
+        # Clear original text from memory after chunking
+        del text
+        gc.collect()
+        
+        all_clauses = []
+        seen_ids = set()
+        
+        for i, chunk in enumerate(chunks):
+            chunk_text = chunk[:max_chars_per_call] if len(chunk) > max_chars_per_call else chunk
+            del chunk  # Clear chunk immediately after extracting text
+            prompt = self._build_parsing_prompt(chunk_text, pdf_path, framework)
+            del chunk_text  # Clear chunk text after building prompt
             
-            result = json.loads(response.choices[0].message.content)
-            clauses = self._convert_llm_response_to_clauses(result, pdf_path, framework)
-            
-            logger.info(f"LLM extracted {len(clauses)} clauses from {pdf_path.name}")
-            return clauses
-            
-        except Exception as e:
-            logger.error(f"LLM parsing error for {pdf_path.name}: {e}")
-            raise
+            try:
+                response = self.llm_client.chat.completions.create(
+                    model=self.llm_model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": f"You are an expert at extracting structured compliance requirements from {framework.value} ESG standard documents."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    temperature=1,  # gpt-5-nano only supports default (1)
+                    response_format={"type": "json_object"}
+                )
+                del prompt  # Clear prompt after API call
+                
+                result = json.loads(response.choices[0].message.content)
+                del response  # Clear response immediately
+                
+                clauses = self._convert_llm_response_to_clauses(result, pdf_path, framework)
+                del result  # Clear result after conversion
+                
+                for c in clauses:
+                    # Deduplicate by clause_id across chunks
+                    key = (c.clause_id, (c.title or "")[:80])
+                    if key in seen_ids:
+                        continue
+                    seen_ids.add(key)
+                    all_clauses.append(c)
+                
+                del clauses  # Clear clauses list after processing
+                
+                if len(chunks) > 1:
+                    logger.info(f"Chunk {i + 1}/{len(chunks)}: extracted {len([k for k in seen_ids])} unique clauses so far")
+                
+                # Delay and garbage collection between chunks
+                if i < len(chunks) - 1:
+                    time.sleep(2.5)  # Increased to 2.5s for better memory recovery
+                    gc.collect()
+                    logger.info(f"Memory cleared, waiting before next chunk...")
+                    
+            except Exception as e:
+                logger.warning(f"LLM parsing failed for chunk {i + 1}: {e}")
+        
+        del chunks  # Clear chunks list
+        del seen_ids  # Clear seen_ids set
+        gc.collect()
+        
+        logger.info(f"LLM extracted {len(all_clauses)} clauses from {pdf_path.name}")
+        return all_clauses
     
     def _build_parsing_prompt(
         self, 

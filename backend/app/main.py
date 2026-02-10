@@ -16,6 +16,8 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import List, Optional
+import asyncio
+import gc
 import logging
 from pathlib import Path
 import shutil
@@ -28,6 +30,7 @@ from app.models import (
     ComplianceReport,
     ESGFramework,
     ESGClause,
+    EvidenceType,
     GroundTruthLabel,
     ComplianceStatus
 )
@@ -75,38 +78,128 @@ compliance_reports = {}
 parsed_clauses = {}
 
 
+def _clauses_from_vector_store(rows: List[dict]) -> List[ESGClause]:
+    """Convert vector-store clause dicts (from get_all_clauses) to ESGClause objects."""
+    clauses = []
+    for r in rows:
+        meta = r.get("metadata") or {}
+        desc = r.get("description") or ""
+        cid = meta.get("clause_id") or r.get("clause_id", "")
+        if not cid:
+            continue
+        fw_str = (meta.get("framework") or "").strip().upper()
+        try:
+            framework = ESGFramework(fw_str)
+        except ValueError:
+            continue
+        evidence_str = meta.get("evidence_types") or ""
+        evidence_list = []
+        for x in evidence_str.split(","):
+            x = x.strip()
+            if not x:
+                continue
+            try:
+                evidence_list.append(EvidenceType(x))
+            except ValueError:
+                pass
+        keywords_str = meta.get("keywords") or ""
+        keywords = [x.strip() for x in keywords_str.split(",") if x.strip()]
+        clauses.append(ESGClause(
+            clause_id=cid,
+            framework=framework,
+            section=meta.get("section") or None,
+            title=meta.get("title") or "Clause",
+            description=desc,
+            required_evidence_type=evidence_list,
+            mandatory=bool(meta.get("mandatory", True)),
+            validation_rules=[],
+            keywords=keywords,
+        ))
+    return clauses
+
+
 # ============= Startup & Health =============
+
+def _reparse_framework_sync(framework: ESGFramework):
+    """Synchronous re-parse (runs in background thread to avoid blocking). Memory-optimized."""
+    try:
+        vector_store.clear_clauses(framework.value)
+        gc.collect()  # Clear memory after deletion
+        
+        clauses = clause_parser.parse_framework(framework)
+        parsed_clauses[framework.value] = clauses
+        
+        all_clauses = []
+        for f in ESGFramework:
+            all_clauses.extend(parsed_clauses.get(f.value, []))
+        parsed_clauses["all"] = all_clauses
+        
+        if clauses:
+            logger.info(f"Re-parsed {len(clauses)} {framework.value} clauses, indexing...")
+            vector_store.add_clauses(clauses)
+            logger.info(f"Indexed {len(clauses)} {framework.value} clauses into vector store")
+            logger.info(f"Total clauses for API: {len(all_clauses)}")
+        
+        # Clear intermediate data
+        del clauses
+        del all_clauses
+        gc.collect()
+        
+    except Exception as e:
+        logger.error(f"Error re-parsing {framework.value} in background: {e}")
+
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the application on startup"""
+    """Load clauses from DB where present; frameworks marked for re-parse run in background."""
     logger.info("Starting ESGBuddy API")
-    
-    # Ensure directories exist
     settings.ensure_directories()
-    
-    # Always parse standards so parsed_clauses is populated for the /clauses API
     stats = vector_store.get_collection_stats()
     logger.info(f"Vector store stats: {stats}")
-    
+    enabled = [f.strip().upper() for f in settings.parse_frameworks.split(",") if f.strip()]
+    if not enabled:
+        enabled = ["BRSR"]
+    reparse_on_startup = [f.strip().upper() for f in settings.reparse_frameworks_on_startup.split(",") if f.strip()]
+    all_clauses = []
     try:
-        clauses = clause_parser.parse_all_standards()
-        if clauses:
-            parsed_clauses['all'] = clauses
-            for framework in ESGFramework:
-                framework_clauses = [c for c in clauses if c.framework == framework]
-                parsed_clauses[framework.value] = framework_clauses
-            logger.info(f"Parsed {len(clauses)} clauses for API")
-            
-            # Only add to vector store if not already indexed (avoids re-embedding)
-            if stats['esg_clauses'] == 0:
-                logger.info("Indexing clauses into vector store...")
-                vector_store.add_clauses(clauses)
-                logger.info(f"Indexed {len(clauses)} clauses into vector store")
+        for framework in ESGFramework:
+            if framework.value not in enabled:
+                parsed_clauses[framework.value] = []
+                continue
+            always_reparse = framework.value in reparse_on_startup
+            if always_reparse:
+                # Load existing clauses temporarily, then re-parse in background
+                existing = vector_store.get_all_clauses(framework.value)
+                if existing:
+                    clauses = _clauses_from_vector_store(existing)
+                    parsed_clauses[framework.value] = clauses
+                    all_clauses.extend(clauses)
+                    logger.info(f"Loaded {len(clauses)} {framework.value} clauses temporarily (re-parsing in background...)")
+                else:
+                    parsed_clauses[framework.value] = []
+                # Schedule background re-parse
+                loop = asyncio.get_event_loop()
+                loop.run_in_executor(None, _reparse_framework_sync, framework)
+                logger.info(f"Scheduled {framework.value} re-parse in background")
             else:
-                logger.info("Vector store already has clauses, skipping re-index")
+                existing = vector_store.get_all_clauses(framework.value)
+                if existing:
+                    clauses = _clauses_from_vector_store(existing)
+                    parsed_clauses[framework.value] = clauses
+                    all_clauses.extend(clauses)
+                    logger.info(f"Loaded {len(clauses)} {framework.value} clauses from vector store (skipping re-parse)")
+                else:
+                    clauses = clause_parser.parse_framework(framework)
+                    parsed_clauses[framework.value] = clauses
+                    all_clauses.extend(clauses)
+                    if clauses:
+                        logger.info(f"Indexing {len(clauses)} {framework.value} clauses into vector store...")
+                        vector_store.add_clauses(clauses)
+                        logger.info(f"Indexed {len(clauses)} clauses into vector store")
+        parsed_clauses["all"] = all_clauses
+        logger.info(f"Startup complete. Total clauses for API: {len(all_clauses)} (TCFD re-parsing in background)")
     except Exception as e:
-        logger.error(f"Error parsing standards on startup: {e}")
+        logger.error(f"Error loading/parsing standards on startup: {e}")
 
 
 @app.get("/")
@@ -544,6 +637,45 @@ async def get_benchmark_stats():
 
 
 # ============= System Management =============
+
+@app.post("/system/reparse-framework")
+async def reparse_framework(framework: str):
+    """
+    Re-parse a single framework (e.g. TCFD, BRSR), clear its clauses from the vector store,
+    then parse from PDFs and re-index. Use this to refresh clauses after code or document changes.
+    """
+    try:
+        fw_upper = framework.strip().upper()
+        try:
+            fw_enum = ESGFramework(fw_upper)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid framework: {framework}. Must be one of: BRSR, GRI, SASB, TCFD"
+            )
+        logger.info(f"Re-parsing framework: {fw_upper}")
+        vector_store.clear_clauses(fw_upper)
+        clauses = clause_parser.parse_framework(fw_enum)
+        parsed_clauses[fw_enum.value] = clauses
+        all_clauses = []
+        for f in ESGFramework:
+            all_clauses.extend(parsed_clauses.get(f.value, []))
+        parsed_clauses["all"] = all_clauses
+        if clauses:
+            vector_store.add_clauses(clauses)
+            logger.info(f"Re-parsed and indexed {len(clauses)} {fw_upper} clauses")
+        return {
+            "message": f"Framework {fw_upper} reparsed successfully",
+            "framework": fw_upper,
+            "clauses_count": len(clauses),
+            "total_clauses": len(all_clauses),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reparsing framework {framework}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/system/reparse-standards")
 async def reparse_standards(use_llm: bool = False):
