@@ -13,7 +13,7 @@ import {
 import { getClauses, getClauseDetail } from '../lib/api'
 
 const Clauses = () => {
-  const [clauses, setClauses] = useState([])
+  const [allClauses, setAllClauses] = useState([])  // Store all clauses
   const [loading, setLoading] = useState(true)
   const [selectedFramework, setSelectedFramework] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -21,22 +21,21 @@ const Clauses = () => {
   const [clauseDetail, setClauseDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   
-  const loadClauses = useCallback(async () => {
-    setLoading(true)
-    try {
-      const framework = selectedFramework === 'all' ? null : selectedFramework
-      const data = await getClauses(framework)
-      setClauses(data.clauses || [])
-    } catch (error) {
-      console.error('Error loading clauses:', error)
-    } finally {
-      setLoading(false)
-    }
-  }, [selectedFramework])
-
+  // Load all clauses once on mount
   useEffect(() => {
-    loadClauses()
-  }, [loadClauses])
+    const loadAllClauses = async () => {
+      setLoading(true)
+      try {
+        const data = await getClauses(null)  // null = fetch all frameworks
+        setAllClauses(data.clauses || [])
+      } catch (error) {
+        console.error('Error loading clauses:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadAllClauses()
+  }, [])
   
   const loadClauseDetail = async (clauseId) => {
     setLoadingDetail(true)
@@ -60,19 +59,39 @@ const Clauses = () => {
     }
   }
   
-  const filteredClauses = clauses.filter(clause =>
-    clause.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    clause.clause_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    clause.description.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  // Filter by framework and search query
+  const filteredClauses = React.useMemo(() => {
+    console.log('Filtering - Framework:', selectedFramework, 'Total clauses:', allClauses.length)
+    
+    // First filter by framework (case-insensitive comparison)
+    let result = selectedFramework === 'all' 
+      ? allClauses 
+      : allClauses.filter(c => c.framework?.toUpperCase() === selectedFramework.toUpperCase())
+    
+    console.log('After framework filter:', result.length, 'clauses')
+    
+    // Then filter by search query if present
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      result = result.filter(clause =>
+        clause.title?.toLowerCase().includes(query) ||
+        clause.clause_id?.toLowerCase().includes(query) ||
+        clause.description?.toLowerCase().includes(query)
+      )
+      console.log('After search filter:', result.length, 'clauses')
+    }
+    
+    return result
+  }, [selectedFramework, searchQuery, allClauses])
   
-  const frameworkCounts = {
-    all: clauses.length,
-    GRI: clauses.filter(c => c.framework === 'GRI').length,
-    BRSR: clauses.filter(c => c.framework === 'BRSR').length,
-    SASB: clauses.filter(c => c.framework === 'SASB').length,
-    TCFD: clauses.filter(c => c.framework === 'TCFD').length,
-  }
+  // Calculate counts from ALL clauses, not filtered ones
+  const frameworkCounts = React.useMemo(() => ({
+    all: allClauses.length,
+    GRI: allClauses.filter(c => c.framework === 'GRI').length,
+    BRSR: allClauses.filter(c => c.framework === 'BRSR').length,
+    SASB: allClauses.filter(c => c.framework === 'SASB').length,
+    TCFD: allClauses.filter(c => c.framework === 'TCFD').length,
+  }), [allClauses])
   
   return (
     <div className="min-h-[calc(100vh-80px)] py-12">
@@ -145,13 +164,13 @@ const Clauses = () => {
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-4" key={selectedFramework}>
               {filteredClauses.map((clause, index) => (
                 <motion.div
-                  key={clause.clause_id}
+                  key={`${selectedFramework}-${clause.clause_id}`}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.02 }}
+                  transition={{ delay: Math.min(index * 0.02, 0.3) }}
                   className="bg-white rounded-xl shadow-lg border border-ink-200 overflow-hidden hover:border-forest-300 transition-all duration-300"
                 >
                   {/* Clause Header */}

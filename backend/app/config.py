@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # Comma-separated frameworks to parse on startup (e.g. "BRSR,GRI,TCFD")
     parse_frameworks: str = "BRSR,GRI,TCFD,SASB"  # All frameworks enabled
     # Frameworks to always re-parse on startup (never load from DB). e.g. "GRI"
-    reparse_frameworks_on_startup: str = "SASB"  # Only SASB reparses; others load from DB
+    reparse_frameworks_on_startup: str = ""  # All frameworks load from DB (no reparsing)
     
     # Chunking Configuration
     chunk_size: int = 512
