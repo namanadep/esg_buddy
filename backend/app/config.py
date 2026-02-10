@@ -25,10 +25,10 @@ class Settings(BaseSettings):
     # Application
     environment: str = "development"
     log_level: str = "INFO"
-    # Comma-separated frameworks to parse on startup (e.g. "BRSR" or "BRSR,TCFD")
-    parse_frameworks: str = "BRSR,TCFD"
-    # Frameworks to always re-parse on startup (never load from DB). e.g. "TCFD"
-    reparse_frameworks_on_startup: str = ""  # Empty: load from DB, don't re-parse (parse on HPC instead)
+    # Comma-separated frameworks to parse on startup (e.g. "BRSR,GRI,TCFD")
+    parse_frameworks: str = "BRSR,GRI,TCFD"
+    # Frameworks to always re-parse on startup (never load from DB). e.g. "GRI"
+    reparse_frameworks_on_startup: str = "GRI"  # Only GRI reparses; BRSR and TCFD load from DB
     
     # Chunking Configuration
     chunk_size: int = 512

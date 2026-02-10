@@ -77,6 +77,31 @@ class EnhancedClauseParser:
         logger.info(f"Total parsed: {len(all_clauses)} clauses from all standards")
         return all_clauses
     
+    def _filter_essential_gri_files(self, pdf_files: List[Path]) -> List[Path]:
+        """Filter GRI PDFs to only essential standards (not industry-specific)."""
+        essential_patterns = [
+            'GRI 1_', 'GRI 2_', 'GRI 3_',  # Universal
+            'GRI 201_', 'GRI 205_', 'GRI 207_',  # Economic
+            'GRI 302_', 'GRI 303_', 'GRI 305_',  # Environmental
+            'GRI 401_', 'GRI 403_', 'GRI 404_', 'GRI 405_', 'GRI 413_'  # Social
+        ]
+        # For waste, prefer 2020 version
+        essential_files = []
+        waste_2020_found = False
+        for pdf in pdf_files:
+            name = pdf.name
+            # Check if it's an essential standard
+            if any(name.startswith(pattern) for pattern in essential_patterns):
+                essential_files.append(pdf)
+            # For GRI 306 (Waste), only take 2020 version
+            elif name.startswith('GRI 306_'):
+                if '2020' in name:
+                    essential_files.append(pdf)
+                    waste_2020_found = True
+                elif not waste_2020_found and '2016' not in name:
+                    essential_files.append(pdf)
+        return essential_files
+    
     def parse_framework(self, framework: ESGFramework) -> List[ESGClause]:
         """Parse only one framework (e.g. for incremental add when others already in DB)."""
         all_clauses = []
@@ -87,6 +112,13 @@ class EnhancedClauseParser:
         logger.info(f"Parsing {framework.value} standards from {framework_dir}")
         pdf_files = list({p.resolve() for p in framework_dir.rglob("*.pdf")} | {p.resolve() for p in framework_dir.rglob("*.PDF")})
         pdf_files = [Path(p) for p in sorted(str(x) for x in pdf_files)]
+        
+        # For GRI, filter to essential standards only (skip industry-specific)
+        if framework == ESGFramework.GRI:
+            original_count = len(pdf_files)
+            pdf_files = self._filter_essential_gri_files(pdf_files)
+            logger.info(f"Filtered GRI to {len(pdf_files)} essential standards (from {original_count} total)")
+        
         logger.info(f"Found {len(pdf_files)} PDF files for {framework.value}")
         for pdf_path in pdf_files:
             try:
