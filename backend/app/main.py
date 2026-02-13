@@ -250,8 +250,26 @@ async def upload_document(
     try:
         # Save uploaded file
         upload_path = Path(settings.upload_dir) / file.filename
+        
+        # Read and write file content
+        content = await file.read()
+        
+        # Ensure upload directory exists
+        upload_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write file to disk and ensure it's fully written
         with open(upload_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(content)
+            buffer.flush()  # Ensure data is written to disk
+        
+        # Verify file was written
+        if not upload_path.exists():
+            raise HTTPException(status_code=500, detail="Failed to save file")
+        
+        if upload_path.stat().st_size == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        
+        logger.info(f"File saved: {upload_path} ({len(content)} bytes)")
         
         # Process document
         processor = DocumentProcessor()

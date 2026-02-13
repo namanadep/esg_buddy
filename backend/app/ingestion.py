@@ -34,12 +34,31 @@ class DocumentProcessor:
             - Page count
             - List of (page_number, page_text) tuples
         """
+        doc = None
         try:
-            doc = fitz.open(pdf_path)
+            # Verify file exists and is readable
+            pdf_file = Path(pdf_path)
+            if not pdf_file.exists():
+                raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+            
+            if pdf_file.stat().st_size == 0:
+                raise ValueError(f"PDF file is empty: {pdf_path}")
+            
+            # Open PDF with explicit error handling
+            try:
+                doc = fitz.open(pdf_path)
+            except Exception as e:
+                logger.error(f"PyMuPDF failed to open {pdf_path}: {type(e).__name__}: {e}")
+                raise ValueError(f"Invalid or corrupted PDF file: {e}")
+            
+            if doc.page_count == 0:
+                raise ValueError("PDF has no pages")
+            
             pages = []
             full_text = []
+            page_count = len(doc)
             
-            for page_num in range(len(doc)):
+            for page_num in range(page_count):
                 page = doc[page_num]
                 text = page.get_text("text")
                 
@@ -50,13 +69,18 @@ class DocumentProcessor:
                     pages.append((page_num + 1, text))
                     full_text.append(text)
             
-            doc.close()
-            
-            return "\n\n".join(full_text), len(doc), pages
+            return "\n\n".join(full_text), page_count, pages
             
         except Exception as e:
             logger.error(f"Error extracting text from {pdf_path}: {e}")
             raise
+        finally:
+            # Always close the document
+            if doc is not None:
+                try:
+                    doc.close()
+                except:
+                    pass
     
     def _clean_text(self, text: str) -> str:
         """Clean extracted text"""
