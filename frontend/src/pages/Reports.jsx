@@ -13,50 +13,29 @@ import {
   Search,
   Loader2
 } from 'lucide-react'
+import { listComplianceReports } from '../lib/api'
 
 const Reports = () => {
   const [reports, setReports] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   
-  // Mock data for demonstration - replace with actual API call
   useEffect(() => {
-    // Simulate API call
-    setTimeout(() => {
-      setReports([
-        {
-          report_id: 'report_1',
-          document_filename: 'annual_report_2023.pdf',
-          framework: 'GRI',
-          summary: {
-            total_clauses: 45,
-            supported: 32,
-            partial: 8,
-            not_supported: 3,
-            inferred: 2,
-            compliance_rate: 0.76,
-            average_confidence: 0.82
-          },
-          generated_at: '2024-01-15T10:30:00'
-        },
-        {
-          report_id: 'report_2',
-          document_filename: 'esg_policy_2024.pdf',
-          framework: 'BRSR',
-          summary: {
-            total_clauses: 38,
-            supported: 28,
-            partial: 6,
-            not_supported: 4,
-            inferred: 0,
-            compliance_rate: 0.74,
-            average_confidence: 0.79
-          },
-          generated_at: '2024-01-14T15:45:00'
-        }
-      ])
-      setLoading(false)
-    }, 500)
+    const loadReports = async () => {
+      try {
+        setLoading(true)
+        const data = await listComplianceReports()
+        setReports(data.reports || [])
+      } catch (err) {
+        console.error('Error loading reports:', err)
+        setError(err.response?.data?.detail || 'Failed to load reports')
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    loadReports()
   }, [])
   
   const filteredReports = reports.filter(report =>
@@ -98,6 +77,20 @@ const Reports = () => {
     return (
       <div className="min-h-[calc(100vh-80px)] flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-forest-600 animate-spin" />
+      </div>
+    )
+  }
+  
+  if (error) {
+    return (
+      <div className="min-h-[calc(100vh-80px)] py-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
+            <AlertTriangle className="w-12 h-12 text-red-600 mx-auto mb-4" />
+            <h3 className="font-semibold text-red-900 mb-2">Error Loading Reports</h3>
+            <p className="text-red-700">{error}</p>
+          </div>
+        </div>
       </div>
     )
   }

@@ -19,6 +19,7 @@ from typing import List, Optional
 import asyncio
 import gc
 import logging
+import json
 from pathlib import Path
 import shutil
 from datetime import datetime
@@ -76,6 +77,55 @@ clause_parser = EnhancedClauseParser(use_llm=settings.use_llm_parsing)
 documents_metadata = {}
 compliance_reports = {}
 parsed_clauses = {}
+
+# Documents metadata persistence file
+DOCUMENTS_METADATA_FILE = Path("./data/documents_metadata.json")
+
+
+def save_documents_metadata():
+    """Save documents metadata to JSON file"""
+    try:
+        DOCUMENTS_METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(DOCUMENTS_METADATA_FILE, 'w') as f:
+            # Convert DocumentMetadata objects to dict
+            data = {
+                doc_id: {
+                    "filename": meta.filename,
+                    "upload_date": meta.upload_date.isoformat(),
+                    "page_count": meta.page_count,
+                    "file_size": meta.file_size
+                }
+                for doc_id, meta in documents_metadata.items()
+            }
+            json.dump(data, f, indent=2)
+        logger.info(f"Saved metadata for {len(documents_metadata)} documents")
+    except Exception as e:
+        logger.error(f"Error saving documents metadata: {e}")
+
+
+def load_documents_metadata():
+    """Load documents metadata from JSON file"""
+    global documents_metadata
+    try:
+        if DOCUMENTS_METADATA_FILE.exists():
+            with open(DOCUMENTS_METADATA_FILE, 'r') as f:
+                data = json.load(f)
+            # Convert dict back to DocumentMetadata objects
+            from app.models import DocumentMetadata
+            documents_metadata = {
+                doc_id: DocumentMetadata(
+                    filename=meta["filename"],
+                    upload_date=datetime.fromisoformat(meta["upload_date"]),
+                    page_count=meta["page_count"],
+                    file_size=meta["file_size"]
+                )
+                for doc_id, meta in data.items()
+            }
+            logger.info(f"Loaded metadata for {len(documents_metadata)} documents")
+        else:
+            logger.info("No documents metadata file found, starting fresh")
+    except Exception as e:
+        logger.error(f"Error loading documents metadata: {e}")
 
 
 def _clauses_from_vector_store(rows: List[dict]) -> List[ESGClause]:
@@ -154,6 +204,10 @@ async def startup_event():
     """Load clauses from DB where present; frameworks marked for re-parse run in background."""
     logger.info("Starting ESGBuddy API")
     settings.ensure_directories()
+    
+    # Load documents metadata from persistent storage
+    load_documents_metadata()
+    
     stats = vector_store.get_collection_stats()
     logger.info(f"Vector store stats: {stats}")
     enabled = [f.strip().upper() for f in settings.parse_frameworks.split(",") if f.strip()]
@@ -282,6 +336,7 @@ async def upload_document(
         
         # Store metadata
         documents_metadata[document_id] = metadata
+        save_documents_metadata()  # Persist to disk
         
         # Add to vector store
         vector_store.add_document_chunks(chunks)
@@ -329,6 +384,7 @@ async def delete_document(document_id: str):
         
         # Delete metadata
         del documents_metadata[document_id]
+        save_documents_metadata()  # Persist to disk
         
         # Delete associated reports
         reports_to_delete = [
@@ -444,9 +500,9 @@ async def evaluate_compliance(request: ClauseMatchRequest):
         if not clauses:
             raise HTTPException(status_code=400, detail="No clauses found for evaluation")
         
-        # Run compliance evaluation
+        # Run compliance evaluation (async with parallel processing)
         metadata = documents_metadata[request.document_id]
-        report = compliance_pipeline.evaluate_document(
+        report = await compliance_pipeline.evaluate_document(
             document_id=request.document_id,
             clauses=clauses,
             document_metadata=metadata,
@@ -469,6 +525,25 @@ async def evaluate_compliance(request: ClauseMatchRequest):
     except Exception as e:
         logger.error(f"Error evaluating compliance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/compliance/reports")
+async def list_compliance_reports():
+    """List all compliance reports"""
+    reports = []
+    for report_id, report in compliance_reports.items():
+        reports.append({
+            "report_id": report.report_id,
+            "document_id": report.document_id,
+            "document_filename": report.document_metadata.filename,
+            "framework": report.framework.value,
+            "summary": report.summary,
+            "generated_at": report.generated_at.isoformat()
+        })
+    
+    # Sort by most recent first
+    reports.sort(key=lambda x: x["generated_at"], reverse=True)
+    return {"reports": reports}
 
 
 @app.get("/compliance/reports/{report_id}")

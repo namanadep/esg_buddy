@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     top_k_chunks: int = 5
     confidence_threshold: float = 0.7
     
+    # Compliance Evaluation Configuration
+    enable_reflection: bool = False  # Disable reflection for faster evaluation
+    parallel_clause_evaluation: int = 10  # Number of clauses to evaluate in parallel
+    
     # Storage Paths
     upload_dir: str = "./data/uploads"
     clause_db_path: str = "./data/clauses.db"

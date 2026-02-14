@@ -4,6 +4,7 @@ Main compliance evaluation engine combining semantic retrieval, LLM, and rule va
 """
 
 import openai
+import asyncio
 from typing import List, Optional, Dict, Any
 import logging
 import json
@@ -35,7 +36,7 @@ class CompliancePipeline:
         self.llm_client = openai.OpenAI(api_key=settings.openai_api_key)
         self.llm_model = settings.llm_model
     
-    def evaluate_document(
+    async def evaluate_document(
         self,
         document_id: str,
         clauses: List[ESGClause],
@@ -43,7 +44,7 @@ class CompliancePipeline:
         framework: ESGFramework
     ) -> ComplianceReport:
         """
-        Evaluate a document against ESG clauses
+        Evaluate a document against ESG clauses with parallel processing
         
         Args:
             document_id: ID of the document to evaluate
@@ -54,18 +55,32 @@ class CompliancePipeline:
         Returns:
             Complete compliance report
         """
-        logger.info(f"Evaluating document {document_id} against {len(clauses)} clauses")
+        logger.info(f"Evaluating document {document_id} against {len(clauses)} clauses (parallel={settings.parallel_clause_evaluation})")
         
         evaluations = []
+        batch_size = settings.parallel_clause_evaluation
         
-        for clause in clauses:
-            try:
-                evaluation = self.evaluate_clause(document_id, clause)
-                evaluations.append(evaluation)
-            except Exception as e:
-                logger.error(f"Error evaluating clause {clause.clause_id}: {e}")
-                # Create failed evaluation
-                evaluations.append(self._create_error_evaluation(clause, str(e)))
+        # Process clauses in parallel batches
+        for i in range(0, len(clauses), batch_size):
+            batch = clauses[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}/{(len(clauses) + batch_size - 1)//batch_size} ({len(batch)} clauses)")
+            
+            # Create tasks for parallel evaluation
+            tasks = []
+            for clause in batch:
+                task = asyncio.create_task(self.evaluate_clause_async(document_id, clause))
+                tasks.append(task)
+            
+            # Wait for all tasks in batch to complete
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results
+            for j, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error evaluating clause {batch[j].clause_id}: {result}")
+                    evaluations.append(self._create_error_evaluation(batch[j], str(result)))
+                else:
+                    evaluations.append(result)
         
         # Generate summary
         summary = self._generate_summary(evaluations)
@@ -83,6 +98,19 @@ class CompliancePipeline:
         logger.info(f"Evaluation complete: {summary}")
         
         return report
+    
+    async def evaluate_clause_async(
+        self,
+        document_id: str,
+        clause: ESGClause,
+        top_k: Optional[int] = None
+    ) -> ClauseEvaluation:
+        """
+        Async wrapper for evaluate_clause to enable parallel processing
+        """
+        # Run synchronous code in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.evaluate_clause, document_id, clause, top_k)
     
     def evaluate_clause(
         self,
@@ -175,12 +203,15 @@ class CompliancePipeline:
         evidence: List[RetrievedEvidence]
     ) -> LLMEvaluation:
         """
-        Agentic LLM evaluation with Chain-of-Thought and Self-Reflection
+        LLM evaluation with optional Chain-of-Thought and Self-Reflection
         
-        Process:
+        Process (when reflection enabled):
         1. Chain-of-Thought: LLM thinks step-by-step
         2. Self-Reflection: LLM reviews its own reasoning
         3. Revision (if needed): LLM corrects identified issues
+        
+        Process (when reflection disabled - FAST MODE):
+        1. Direct evaluation with simplified prompt
         
         Args:
             clause: ESG clause to evaluate
@@ -190,27 +221,29 @@ class CompliancePipeline:
             LLM evaluation result with reasoning traces
         """
         try:
-            # Step 1: Chain-of-Thought Reasoning
-            cot_result = self._chain_of_thought_reasoning(clause, evidence)
-            
-            # Step 2: Self-Reflection
-            reflection_result = self._self_reflection(clause, evidence, cot_result)
-            
-            # Step 3: Decide if revision is needed
-            if reflection_result.get("needs_revision", False):
-                logger.info(f"Reflection identified issues for {clause.clause_id}, revising...")
-                # Revise the analysis
-                final_result = self._revise_reasoning(
-                    clause, 
-                    evidence, 
-                    cot_result, 
-                    reflection_result
-                )
-                revised = True
+            if settings.enable_reflection:
+                # Full agentic workflow with reflection
+                cot_result = self._chain_of_thought_reasoning(clause, evidence)
+                reflection_result = self._self_reflection(clause, evidence, cot_result)
+                
+                if reflection_result.get("needs_revision", False):
+                    logger.info(f"Reflection identified issues for {clause.clause_id}, revising...")
+                    final_result = self._revise_reasoning(clause, evidence, cot_result, reflection_result)
+                    revised = True
+                else:
+                    final_result = cot_result
+                    revised = False
+                
+                reflection = reflection_result.get("reflection", "")
+                reflection_issues = reflection_result.get("issues", [])
+                reasoning_steps = cot_result.get("reasoning_steps", [])
             else:
-                # Use original analysis
-                final_result = cot_result
+                # Fast mode: Single LLM call without reflection
+                final_result = self._fast_evaluation(clause, evidence)
                 revised = False
+                reflection = ""
+                reflection_issues = []
+                reasoning_steps = []
             
             # Map status
             status_map = {
@@ -230,20 +263,71 @@ class CompliancePipeline:
                 confidence=float(final_result.get("confidence", 0.5)),
                 explanation=final_result.get("explanation", ""),
                 reasoning=final_result.get("detailed_reasoning", ""),
-                reasoning_steps=cot_result.get("reasoning_steps", []),
-                reflection=reflection_result.get("reflection", ""),
-                reflection_issues=reflection_result.get("issues", []),
+                reasoning_steps=reasoning_steps,
+                reflection=reflection,
+                reflection_issues=reflection_issues,
                 revised=revised
             )
             
         except Exception as e:
-            logger.error(f"Agentic LLM evaluation error: {e}")
+            logger.error(f"LLM evaluation error: {e}")
             return LLMEvaluation(
                 status=ComplianceStatus.NOT_SUPPORTED,
                 confidence=0.0,
                 explanation=f"LLM evaluation failed: {str(e)}",
                 reasoning=""
             )
+    
+    def _fast_evaluation(
+        self,
+        clause: ESGClause,
+        evidence: List[RetrievedEvidence]
+    ) -> Dict[str, Any]:
+        """
+        Fast evaluation mode: Single LLM call with streamlined prompt
+        """
+        evidence_text = "\n\n".join([
+            f"[Evidence {i+1}] (Page {ev.page_number}, Score: {ev.similarity_score:.2f})\n{ev.text}"
+            for i, ev in enumerate(evidence[:5])
+        ])
+        
+        prompt = f"""Evaluate ESG compliance for this clause based on the evidence provided.
+
+**Clause:** {clause.title}
+**Requirement:** {clause.description}
+**Framework:** {clause.framework.value}
+**Required Evidence:** {', '.join([et.value for et in clause.required_evidence_type])}
+
+**Evidence:**
+{evidence_text}
+
+**Evaluate:** Does the evidence support compliance with this requirement?
+
+**Response (JSON):**
+{{
+    "status": "supported | partial | not_supported | inferred",
+    "confidence": 0.0-1.0,
+    "explanation": "Brief explanation (2-3 sentences)",
+    "detailed_reasoning": "Specific evidence references and assessment"
+}}
+
+**Definitions:**
+- supported: Evidence clearly demonstrates full compliance
+- partial: Evidence shows some compliance but incomplete
+- not_supported: No relevant evidence or contradicts requirement
+- inferred: Compliance reasonably inferred but not explicit"""
+
+        response = self.llm_client.chat.completions.create(
+            model=self.llm_model,
+            messages=[
+                {"role": "system", "content": "You are an ESG compliance analyst. Be concise and objective."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        
+        return json.loads(response.choices[0].message.content)
     
     def _chain_of_thought_reasoning(
         self,
