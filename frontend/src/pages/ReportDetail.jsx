@@ -16,49 +16,38 @@ import {
   Zap,
   Loader2
 } from 'lucide-react'
+import { getComplianceReport, getClauseEvaluationDetail } from '../lib/api'
 
 const ReportDetail = () => {
   const { reportId } = useParams()
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [expandedClause, setExpandedClause] = useState(null)
   const [clauseDetail, setClauseDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [filterStatus, setFilterStatus] = useState('all')
   
-  // Mock data - replace with actual API call
+  // Fetch real report data from API
   useEffect(() => {
-    setTimeout(() => {
-      setReport({
-        report_id: reportId,
-        document_filename: 'annual_report_2023.pdf',
-        framework: 'GRI',
-        summary: {
-          total_clauses: 45,
-          supported: 32,
-          partial: 8,
-          not_supported: 3,
-          inferred: 2,
-          compliance_rate: 0.76,
-          average_confidence: 0.82
-        },
-        generated_at: '2024-01-15T10:30:00',
-        evaluations: Array(45).fill(null).map((_, i) => ({
-          clause_id: `GRI_${Math.floor(i / 10) + 1}_${i % 10}`,
-          clause_title: `GRI Standard ${Math.floor(i / 10) + 1} - Disclosure ${i % 10}`,
-          final_status: ['supported', 'partial', 'not_supported', 'inferred'][Math.floor(Math.random() * 4)],
-          final_confidence: 0.6 + Math.random() * 0.4,
-          evidence_count: Math.floor(Math.random() * 5) + 1,
-          llm_explanation: 'The company provides detailed disclosure of this metric in Section 4.2 of the annual report.',
-          override_applied: false,
-          override_reason: null
-        }))
-      })
-      setLoading(false)
-    }, 500)
+    const loadReport = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        const data = await getComplianceReport(reportId)
+        setReport(data)
+      } catch (err) {
+        console.error('Error loading report:', err)
+        setError(err.response?.data?.detail || 'Failed to load report')
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    loadReport()
   }, [reportId])
   
-  const handleClauseClick = (clauseId) => {
+  const handleClauseClick = async (clauseId) => {
     if (expandedClause === clauseId) {
       setExpandedClause(null)
       setClauseDetail(null)
@@ -66,56 +55,15 @@ const ReportDetail = () => {
       setExpandedClause(clauseId)
       setLoadingDetail(true)
       
-      // Mock loading clause detail
-      setTimeout(() => {
-        setClauseDetail({
-          clause: {
-            clause_id: clauseId,
-            title: `Detailed clause title for ${clauseId}`,
-            description: 'Full description of the ESG clause requirement...',
-            framework: 'GRI',
-            section: 'Environmental'
-          },
-          final_status: 'supported',
-          final_confidence: 0.85,
-          llm_evaluation: {
-            status: 'supported',
-            confidence: 0.85,
-            explanation: 'The evidence clearly demonstrates compliance with this requirement.',
-            reasoning: 'Found relevant disclosures on pages 24-26 that explicitly address all aspects of this clause.',
-            reasoning_steps: [
-              'Step 1: Evidence Quality - All evidence pieces are directly relevant to the clause requirement with high similarity scores (>90%).',
-              'Step 2: Requirement Matching - The evidence explicitly addresses emissions reporting, scope coverage, and quantification methodology as required.',
-              'Step 3: Evidence Type - Evidence includes both descriptive policy information and numeric data, matching required types.',
-              'Step 4: Completeness - All aspects of the requirement are covered: Scope 1, 2, and 3 emissions with proper documentation.',
-              'Step 5: Compliance Assessment - Based on comprehensive evidence coverage, the company demonstrates full compliance with this clause.'
-            ],
-            reflection: 'The initial analysis is thorough and well-supported. Evidence coverage is strong across all requirement dimensions. Confidence score of 0.85 is appropriately calibrated given the clear documentation found.',
-            reflection_issues: [],
-            revised: false
-          },
-          retrieved_evidence: [
-            {
-              chunk_id: 'chunk_1',
-              text: 'Sample evidence text from the document showing compliance...',
-              page_number: 24,
-              section: 'Environmental Impact',
-              similarity_score: 0.92
-            }
-          ],
-          rule_results: [
-            {
-              rule_id: 'numeric_check',
-              passed: true,
-              message: 'Numeric values found and validated',
-              triggered: true
-            }
-          ],
-          override_applied: false,
-          override_reason: null
-        })
+      try {
+        const detail = await getClauseEvaluationDetail(reportId, clauseId)
+        setClauseDetail(detail)
+      } catch (error) {
+        console.error('Error loading clause detail:', error)
+        // TODO: Show error message to user
+      } finally {
         setLoadingDetail(false)
-      }, 300)
+      }
     }
   }
   
@@ -123,6 +71,48 @@ const ReportDetail = () => {
     return (
       <div className="min-h-[calc(100vh-80px)] flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-forest-600 animate-spin" />
+      </div>
+    )
+  }
+  
+  if (error) {
+    return (
+      <div className="min-h-[calc(100vh-80px)] py-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <Link
+            to="/reports"
+            className="inline-flex items-center space-x-2 text-ink-600 hover:text-forest-600 mb-8 transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span className="font-medium">Back to Reports</span>
+          </Link>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
+            <XCircle className="w-12 h-12 text-red-600 mx-auto mb-4" />
+            <h3 className="font-semibold text-red-900 mb-2">Error Loading Report</h3>
+            <p className="text-red-700">{error}</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  
+  if (!report) {
+    return (
+      <div className="min-h-[calc(100vh-80px)] py-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <Link
+            to="/reports"
+            className="inline-flex items-center space-x-2 text-ink-600 hover:text-forest-600 mb-8 transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span className="font-medium">Back to Reports</span>
+          </Link>
+          <div className="bg-clay-50 border border-ink-200 rounded-xl p-6 text-center">
+            <Info className="w-12 h-12 text-ink-400 mx-auto mb-4" />
+            <h3 className="font-semibold text-ink-900 mb-2">Report Not Found</h3>
+            <p className="text-ink-600">The requested report could not be found.</p>
+          </div>
+        </div>
       </div>
     )
   }
@@ -195,7 +185,7 @@ const ReportDetail = () => {
                 </div>
                 
                 <h1 className="font-display text-3xl font-bold text-ink-900 mb-2">
-                  {report.document_filename}
+                  {report.document_metadata?.filename || report.document_filename}
                 </h1>
                 
                 <p className="text-ink-600">
@@ -290,12 +280,12 @@ const ReportDetail = () => {
                     
                     <div className="flex-1 text-left min-w-0">
                       <h3 className="font-semibold text-ink-900 mb-1">
-                        {evaluation.clause_title}
+                        {evaluation.clause?.title || evaluation.clause_id}
                       </h3>
                       <div className="flex items-center space-x-4 text-xs text-ink-600">
                         <span className="font-mono">{evaluation.clause_id}</span>
                         <span>•</span>
-                        <span>{evaluation.evidence_count} evidence chunks</span>
+                        <span>{evaluation.retrieved_evidence?.length || 0} evidence chunks</span>
                         <span>•</span>
                         <span>Confidence: {Math.round(evaluation.final_confidence * 100)}%</span>
                       </div>
