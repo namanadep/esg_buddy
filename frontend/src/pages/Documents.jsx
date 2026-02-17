@@ -18,7 +18,7 @@ const Documents = () => {
   const [loading, setLoading] = useState(true)
   const [evaluating, setEvaluating] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedFramework, setSelectedFramework] = useState('GRI')
+  const [selectedFramework, setSelectedFramework] = useState('BRSR')
   
   useEffect(() => {
     loadDocuments()

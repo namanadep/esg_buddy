@@ -80,6 +80,8 @@ parsed_clauses = {}
 
 # Documents metadata persistence file
 DOCUMENTS_METADATA_FILE = Path("./data/documents_metadata.json")
+# Compliance reports persistence file
+COMPLIANCE_REPORTS_FILE = Path("./data/compliance_reports.json")
 
 
 def save_documents_metadata():
@@ -91,9 +93,11 @@ def save_documents_metadata():
             data = {
                 doc_id: {
                     "filename": meta.filename,
+                    "document_type": meta.document_type,
                     "upload_date": meta.upload_date.isoformat(),
                     "page_count": meta.page_count,
-                    "file_size": meta.file_size
+                    "year": meta.year,
+                    "company_name": meta.company_name
                 }
                 for doc_id, meta in documents_metadata.items()
             }
@@ -108,24 +112,75 @@ def load_documents_metadata():
     global documents_metadata
     try:
         if DOCUMENTS_METADATA_FILE.exists():
-            with open(DOCUMENTS_METADATA_FILE, 'r') as f:
+            with open(DOCUMENTS_METADATA_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             # Convert dict back to DocumentMetadata objects
             from app.models import DocumentMetadata
-            documents_metadata = {
-                doc_id: DocumentMetadata(
-                    filename=meta["filename"],
-                    upload_date=datetime.fromisoformat(meta["upload_date"]),
-                    page_count=meta["page_count"],
-                    file_size=meta["file_size"]
-                )
-                for doc_id, meta in data.items()
-            }
+            documents_metadata = {}
+            for doc_id, meta in data.items():
+                try:
+                    documents_metadata[doc_id] = DocumentMetadata(
+                        filename=meta["filename"],
+                        document_type=meta.get("document_type", "ESG Report"),  # Default if missing
+                        upload_date=datetime.fromisoformat(meta["upload_date"]),
+                        page_count=meta["page_count"],
+                        year=meta.get("year"),
+                        company_name=meta.get("company_name")
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to load document metadata {doc_id}: {e}, skipping...")
+                    continue
             logger.info(f"Loaded metadata for {len(documents_metadata)} documents")
         else:
             logger.info("No documents metadata file found, starting fresh")
     except Exception as e:
         logger.error(f"Error loading documents metadata: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+def save_compliance_reports():
+    """Save compliance reports to JSON file"""
+    try:
+        COMPLIANCE_REPORTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # Use Pydantic's model_dump with mode='json' for proper serialization
+        # mode='json' converts datetime objects to ISO format strings automatically
+        data = {
+            report_id: report.model_dump(mode='json')
+            for report_id, report in compliance_reports.items()
+        }
+        with open(COMPLIANCE_REPORTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved {len(compliance_reports)} compliance reports")
+    except Exception as e:
+        logger.error(f"Error saving compliance reports: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+def load_compliance_reports():
+    """Load compliance reports from JSON file"""
+    global compliance_reports
+    try:
+        if COMPLIANCE_REPORTS_FILE.exists():
+            with open(COMPLIANCE_REPORTS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # Convert dict back to ComplianceReport objects using Pydantic
+            from app.models import ComplianceReport
+            compliance_reports = {}
+            for report_id, report_data in data.items():
+                try:
+                    compliance_reports[report_id] = ComplianceReport.model_validate(report_data)
+                except Exception as e:
+                    logger.warning(f"Failed to load report {report_id}: {e}, skipping...")
+                    continue
+            logger.info(f"Loaded {len(compliance_reports)} compliance reports")
+        else:
+            logger.info("No compliance reports file found, starting fresh")
+    except Exception as e:
+        logger.error(f"Error loading compliance reports: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 def _clauses_from_vector_store(rows: List[dict]) -> List[ESGClause]:
@@ -205,8 +260,9 @@ async def startup_event():
     logger.info("Starting ESGBuddy API")
     settings.ensure_directories()
     
-    # Load documents metadata from persistent storage
+    # Load documents metadata and compliance reports from persistent storage
     load_documents_metadata()
+    load_compliance_reports()
     
     stats = vector_store.get_collection_stats()
     logger.info(f"Vector store stats: {stats}")
@@ -393,6 +449,7 @@ async def delete_document(document_id: str):
         ]
         for report_id in reports_to_delete:
             del compliance_reports[report_id]
+        save_compliance_reports()  # Persist to disk after deletion
         
         logger.info(f"Deleted document {document_id}")
         
@@ -511,6 +568,7 @@ async def evaluate_compliance(request: ClauseMatchRequest):
         
         # Store report
         compliance_reports[report.report_id] = report
+        save_compliance_reports()  # Persist to disk
         
         logger.info(f"Compliance evaluation complete: {report.report_id}")
         

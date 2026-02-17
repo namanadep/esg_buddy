@@ -284,14 +284,79 @@ class CompliancePipeline:
         evidence: List[RetrievedEvidence]
     ) -> Dict[str, Any]:
         """
-        Fast evaluation mode: Single LLM call with streamlined prompt
+        Fast evaluation mode: Single LLM call with framework-specific prompt
         """
         evidence_text = "\n\n".join([
             f"[Evidence {i+1}] (Page {ev.page_number}, Score: {ev.similarity_score:.2f})\n{ev.text}"
             for i, ev in enumerate(evidence[:5])
         ])
         
-        prompt = f"""Evaluate ESG compliance for this clause based on the evidence provided.
+        # Use BRSR-specific prompt if framework is BRSR
+        if clause.framework.value == "BRSR":
+            prompt = self._get_brsr_prompt(clause, evidence_text)
+            system_message = "You are a BRSR disclosure compliance expert. BRSR is about DISCLOSURE PRESENCE, not fact verification. Focus on whether the required information is disclosed, not whether it's sufficient or accurate."
+        else:
+            prompt = self._get_default_prompt(clause, evidence_text)
+            system_message = "You are an ESG compliance analyst. Be concise and objective."
+        
+        response = self.llm_client.chat.completions.create(
+            model=self.llm_model,
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        
+        return json.loads(response.choices[0].message.content)
+    
+    def _get_brsr_prompt(self, clause: ESGClause, evidence_text: str) -> str:
+        """BRSR-specific prompt focusing on disclosure presence"""
+        return f"""Evaluate BRSR disclosure compliance for this requirement.
+
+**CRITICAL: BRSR is about DISCLOSURE PRESENCE, not verification of facts or adequacy.**
+
+**Clause:** {clause.title}
+**Requirement:** {clause.description}
+**Framework:** BRSR (Business Responsibility & Sustainability Report)
+
+**Evidence:**
+{evidence_text}
+
+**Your Task:** Check if the required disclosure is PRESENT in the evidence, following BRSR guidelines:
+
+**BRSR Compliance Rules:**
+1. **PRESENT = SUPPORTED**: The disclosure is present (even if brief, or says "0", "Nil", "Not applicable")
+2. **CROSS-REFERENCE = SUPPORTED**: Document references another section/page for this information
+3. **"Not applicable" or "NA" = SUPPORTED**: Company explicitly states it's not applicable
+4. **BLANK/MISSING = NOT SUPPORTED**: No disclosure and no explanation
+5. **DO NOT judge quality, completeness, or accuracy** - only check if disclosure exists
+
+**Examples of SUPPORTED:**
+- "Total emissions: 0 tonnes" → SUPPORTED (disclosure present, even if zero)
+- "Refer to page 45 for CSR details" → SUPPORTED (cross-reference provided)
+- "Not applicable - no manufacturing operations" → SUPPORTED (explicit NA with reason)
+- Company provides a table with the required information → SUPPORTED (disclosure present)
+- Brief narrative describing the policy/process → SUPPORTED (disclosure present)
+
+**Examples of NOT SUPPORTED:**
+- Field is blank with no explanation → NOT SUPPORTED
+- Question is ignored entirely → NOT SUPPORTED
+
+**Response (JSON):**
+{{
+    "status": "supported | not_supported",
+    "confidence": 0.85-1.0,
+    "explanation": "State what disclosure was found or missing",
+    "detailed_reasoning": "Quote specific text or describe what was disclosed"
+}}
+
+**Remember:** BRSR companies are already compliant if they disclose the information. Mark as "supported" if ANY disclosure, cross-reference, or explicit NA is present."""
+    
+    def _get_default_prompt(self, clause: ESGClause, evidence_text: str) -> str:
+        """Default prompt for non-BRSR frameworks"""
+        return f"""Evaluate ESG compliance for this clause based on the evidence provided.
 
 **Clause:** {clause.title}
 **Requirement:** {clause.description}
@@ -316,18 +381,6 @@ class CompliancePipeline:
 - partial: Evidence shows some compliance but incomplete
 - not_supported: No relevant evidence or contradicts requirement
 - inferred: Compliance reasonably inferred but not explicit"""
-
-        response = self.llm_client.chat.completions.create(
-            model=self.llm_model,
-            messages=[
-                {"role": "system", "content": "You are an ESG compliance analyst. Be concise and objective."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"}
-        )
-        
-        return json.loads(response.choices[0].message.content)
     
     def _chain_of_thought_reasoning(
         self,
@@ -343,6 +396,24 @@ class CompliancePipeline:
             for i, ev in enumerate(evidence[:5])
         ])
         
+        # Use BRSR-specific Chain-of-Thought if framework is BRSR
+        if clause.framework.value == "BRSR":
+            system_msg = "You are a BRSR disclosure compliance expert. BRSR is about DISCLOSURE PRESENCE, not fact verification."
+            task_steps = """
+1. **Disclosure Presence**: Is the required disclosure present in the evidence (text, table, number, or narrative)?
+2. **Cross-Reference Check**: Does the evidence reference another section/page for this information?
+3. **Explicit NA/Nil**: Does the company explicitly state "Not applicable", "Nil", "0", or similar?
+4. **Blank/Missing**: Is the disclosure completely absent with no explanation?
+5. **BRSR Compliance**: Based on disclosure presence (not quality), mark as supported or not_supported"""
+        else:
+            system_msg = "You are an expert ESG compliance analyst who thinks step-by-step and provides detailed reasoning."
+            task_steps = """
+1. **Evidence Quality**: Assess the relevance and quality of each evidence piece
+2. **Requirement Matching**: Does the evidence address all aspects of the requirement?
+3. **Evidence Type**: Does the evidence match the required type (numeric, descriptive, policy, etc.)?
+4. **Completeness**: Are there any gaps in the evidence?
+5. **Compliance Assessment**: Based on the above, what is the compliance status?"""
+        
         prompt = f"""You are an expert ESG compliance analyst. Analyze this ESG clause against the provided evidence using step-by-step reasoning.
 
 **ESG Clause:**
@@ -356,21 +427,16 @@ class CompliancePipeline:
 {evidence_text}
 
 **Task: Think step-by-step through the following:**
-
-1. **Evidence Quality**: Assess the relevance and quality of each evidence piece
-2. **Requirement Matching**: Does the evidence address all aspects of the requirement?
-3. **Evidence Type**: Does the evidence match the required type (numeric, descriptive, policy, etc.)?
-4. **Completeness**: Are there any gaps in the evidence?
-5. **Compliance Assessment**: Based on the above, what is the compliance status?
+{task_steps}
 
 **Response Format (JSON):**
 {{
     "reasoning_steps": [
-        "Step 1: Evidence Quality - ...",
-        "Step 2: Requirement Matching - ...",
-        "Step 3: Evidence Type - ...",
-        "Step 4: Completeness - ...",
-        "Step 5: Compliance Assessment - ..."
+        "Step 1: ...",
+        "Step 2: ...",
+        "Step 3: ...",
+        "Step 4: ...",
+        "Step 5: ..."
     ],
     "status": "supported | partial | not_supported | inferred",
     "confidence": 0.0-1.0,
@@ -378,14 +444,14 @@ class CompliancePipeline:
     "detailed_reasoning": "Comprehensive reasoning with evidence references"
 }}
 
-Think carefully and be thorough. Each step should build on the previous one."""
+{"**BRSR REMINDER: Mark as 'supported' if ANY disclosure, cross-reference, or explicit NA is present. BRSR is about presence, not quality.**" if clause.framework.value == "BRSR" else "Think carefully and be thorough. Each step should build on the previous one."}"""
 
         response = self.llm_client.chat.completions.create(
             model=self.llm_model,
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert ESG compliance analyst who thinks step-by-step and provides detailed reasoning."
+                    "content": system_msg
                 },
                 {
                     "role": "user",
