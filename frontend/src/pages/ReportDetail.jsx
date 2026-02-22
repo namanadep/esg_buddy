@@ -285,7 +285,7 @@ const ReportDetail = () => {
                       <div className="flex items-center space-x-4 text-xs text-ink-600">
                         <span className="font-mono">{evaluation.clause_id}</span>
                         <span>•</span>
-                        <span>{evaluation.retrieved_evidence?.length || 0} evidence chunks</span>
+                        <span>Top {evaluation.evidence_count ?? evaluation.retrieved_evidence?.length ?? 0} evidence chunks</span>
                         <span>•</span>
                         <span>Confidence: {Math.round(evaluation.final_confidence * 100)}%</span>
                       </div>

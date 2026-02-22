@@ -158,16 +158,34 @@ class VectorStore:
             where=where if where else None
         )
         
-        # Convert to RetrievedEvidence
+        # Convert to RetrievedEvidence. ChromaDB uses L2 distance (not 0-1), so convert to 0-1 similarity.
+        # similarity = 1/(1+distance) so distance 0 -> 1, large distance -> ~0
+        MIN_SIMILARITY = 0.12  # Only drop very weak matches; avoid filtering out all evidence
         evidence = []
         if results['ids'] and len(results['ids'][0]) > 0:
             for i in range(len(results['ids'][0])):
+                dist = float(results['distances'][0][i])
+                similarity_score = 1.0 / (1.0 + dist)  # L2 distance -> 0-1 similarity
+                if similarity_score >= MIN_SIMILARITY:
+                    evidence.append(RetrievedEvidence(
+                        chunk_id=results['ids'][0][i],
+                        text=results['documents'][0][i],
+                        page_number=results['metadatas'][0][i].get('page_number', 0),
+                        section=results['metadatas'][0][i].get('section'),
+                        similarity_score=similarity_score,
+                        document_id=results['metadatas'][0][i].get('document_id', '')
+                    ))
+            # If threshold filtered everything out, keep at least the best match so LLM has evidence
+            if not evidence and results['ids'][0]:
+                i = 0
+                dist = float(results['distances'][0][i])
+                similarity_score = 1.0 / (1.0 + dist)
                 evidence.append(RetrievedEvidence(
                     chunk_id=results['ids'][0][i],
                     text=results['documents'][0][i],
                     page_number=results['metadatas'][0][i].get('page_number', 0),
                     section=results['metadatas'][0][i].get('section'),
-                    similarity_score=1 - results['distances'][0][i],  # Convert distance to similarity
+                    similarity_score=similarity_score,
                     document_id=results['metadatas'][0][i].get('document_id', '')
                 ))
         

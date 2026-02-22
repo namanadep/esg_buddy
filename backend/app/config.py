@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = 50
     
     # Retrieval Configuration
-    top_k_chunks: int = 5
+    top_k_chunks: int = 8  # Fetch more candidates, then filter by similarity threshold
     confidence_threshold: float = 0.7
     
     # Compliance Evaluation Configuration
