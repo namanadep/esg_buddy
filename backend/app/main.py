@@ -559,6 +559,10 @@ async def evaluate_compliance(request: ClauseMatchRequest):
         
         # Run compliance evaluation (async with parallel processing)
         metadata = documents_metadata[request.document_id]
+        # Use the document filename from the request when provided, so the report always
+        # shows the name of the document the user selected (avoids wrong name from any mix-up)
+        if request.document_filename and request.document_filename.strip():
+            metadata = metadata.model_copy(update={"filename": request.document_filename.strip()})
         report = await compliance_pipeline.evaluate_document(
             document_id=request.document_id,
             clauses=clauses,
@@ -708,6 +712,27 @@ async def override_clause_evaluation(request: ComplianceOverrideRequest):
     evaluation.final_status = request.new_status
     evaluation.override_applied = True
     evaluation.override_reason = f"Manual override: {request.reason}"
+    
+    # Recompute report summary so GET report reflects updated counts
+    total = len(report.evaluations)
+    status_counts = {s: 0 for s in ComplianceStatus}
+    total_confidence = 0.0
+    overrides_count = 0
+    for e in report.evaluations:
+        status_counts[e.final_status] += 1
+        total_confidence += e.final_confidence
+        if e.override_applied:
+            overrides_count += 1
+    report.summary = {
+        "total_clauses": total,
+        "supported": status_counts[ComplianceStatus.SUPPORTED],
+        "partial": status_counts[ComplianceStatus.PARTIAL],
+        "not_supported": status_counts[ComplianceStatus.NOT_SUPPORTED],
+        "inferred": status_counts[ComplianceStatus.INFERRED],
+        "compliance_rate": (status_counts[ComplianceStatus.SUPPORTED] + status_counts[ComplianceStatus.INFERRED]) / total if total > 0 else 0.0,
+        "average_confidence": total_confidence / total if total > 0 else 0.0,
+        "overrides_applied": overrides_count,
+    }
     
     logger.info(f"Override applied to {request.clause_id}: {old_status} -> {request.new_status}")
     

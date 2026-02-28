@@ -14,9 +14,12 @@ import {
   TrendingUp,
   Shield,
   Zap,
-  Loader2
+  Loader2,
+  UserCheck,
+  ThumbsUp,
+  ThumbsDown
 } from 'lucide-react'
-import { getComplianceReport, getClauseEvaluationDetail } from '../lib/api'
+import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation } from '../lib/api'
 
 const ReportDetail = () => {
   const { reportId } = useParams()
@@ -27,7 +30,11 @@ const ReportDetail = () => {
   const [clauseDetail, setClauseDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [filterStatus, setFilterStatus] = useState('all')
-  
+  const [overridingClauseId, setOverridingClauseId] = useState(null)
+  const [overrideReason, setOverrideReason] = useState({})
+
+  const CONFIDENCE_THRESHOLD = 0.7
+
   // Fetch real report data from API
   useEffect(() => {
     const loadReport = async () => {
@@ -46,7 +53,30 @@ const ReportDetail = () => {
     
     loadReport()
   }, [reportId])
-  
+
+  const isAmbiguous = (e) => {
+    if (e.override_applied) return false
+    const status = e.final_status
+    const conf = e.final_confidence ?? 0
+    return status === 'partial' || status === 'inferred' || conf < CONFIDENCE_THRESHOLD
+  }
+
+  const ambiguousClauses = report ? report.evaluations.filter(isAmbiguous) : []
+
+  const handleOverride = async (clauseId, newStatus) => {
+    setOverridingClauseId(clauseId)
+    try {
+      await overrideClauseEvaluation(reportId, clauseId, newStatus, overrideReason[clauseId] || 'Human review')
+      const data = await getComplianceReport(reportId)
+      setReport(data)
+      setOverrideReason((prev) => ({ ...prev, [clauseId]: '' }))
+    } catch (err) {
+      console.error('Override failed:', err)
+    } finally {
+      setOverridingClauseId(null)
+    }
+  }
+
   const handleClauseClick = async (clauseId) => {
     if (expandedClause === clauseId) {
       setExpandedClause(null)
@@ -150,7 +180,9 @@ const ReportDetail = () => {
   const filteredEvaluations = filterStatus === 'all' 
     ? report.evaluations 
     : report.evaluations.filter(e => e.final_status === filterStatus)
-  
+
+  const statusFilterOptions = ['all', 'supported', 'partial', 'not_supported', 'inferred']
+
   return (
     <div className="min-h-[calc(100vh-80px)] py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -237,12 +269,83 @@ const ReportDetail = () => {
               ))}
             </div>
           </div>
+
+          {/* Human Verification Dashboard - always visible */}
+          <div className="bg-amber-50/80 rounded-xl shadow-lg border border-amber-200 p-6 mb-6">
+            <h2 className="font-display text-xl font-bold text-ink-900 mb-1 flex items-center">
+              <UserCheck className="w-6 h-6 mr-2 text-amber-600" />
+              Human verification
+            </h2>
+            {ambiguousClauses.length > 0 ? (
+              <>
+                <p className="text-sm text-ink-600 mb-4">
+                  {ambiguousClauses.length} clause{ambiguousClauses.length !== 1 ? 's' : ''} need your review (low confidence, partial, or inferred). Approve or reject to lock the status.
+                </p>
+                <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
+                  {ambiguousClauses.map((evaluation) => (
+                    <div
+                      key={evaluation.clause_id}
+                      className="bg-white rounded-lg border border-amber-200 p-4 flex flex-wrap items-center gap-3"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-ink-900 truncate">
+                          {evaluation.clause?.title || evaluation.clause_id}
+                        </div>
+                        <div className="text-xs text-ink-600 mt-0.5">
+                          <span className="font-mono">{evaluation.clause_id}</span>
+                          <span className="mx-2">•</span>
+                          <span className="capitalize">{evaluation.final_status.replace('_', ' ')}</span>
+                          <span className="mx-2">•</span>
+                          <span>Confidence: {Math.round((evaluation.final_confidence ?? 0) * 100)}%</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input
+                          type="text"
+                          placeholder="Reason (optional)"
+                          value={overrideReason[evaluation.clause_id] || ''}
+                          onChange={(e) => setOverrideReason((prev) => ({ ...prev, [evaluation.clause_id]: e.target.value }))}
+                          className="px-3 py-1.5 text-sm border border-ink-200 rounded-lg w-40 focus:ring-2 focus:ring-forest-500 focus:border-forest-500"
+                        />
+                        <button
+                          onClick={() => handleOverride(evaluation.clause_id, 'supported')}
+                          disabled={overridingClauseId === evaluation.clause_id}
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-green-100 text-green-800 hover:bg-green-200 disabled:opacity-50"
+                        >
+                          {overridingClauseId === evaluation.clause_id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <>
+                              <ThumbsUp className="w-4 h-4 mr-1" />
+                              Approve
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => handleOverride(evaluation.clause_id, 'not_supported')}
+                          disabled={overridingClauseId === evaluation.clause_id}
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-red-100 text-red-800 hover:bg-red-200 disabled:opacity-50"
+                        >
+                          <ThumbsDown className="w-4 h-4 mr-1" />
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-ink-600">
+                No clauses need review. Clauses appear here when they are <strong>partial</strong>, <strong>inferred</strong>, or have <strong>confidence below 70%</strong>. You can then approve or reject to lock the status.
+              </p>
+            )}
+          </div>
           
           {/* Filters */}
           <div className="bg-white rounded-xl shadow-lg border border-ink-200 p-4 mb-6">
             <div className="flex items-center space-x-2">
               <span className="text-sm font-medium text-ink-700 mr-2">Filter by status:</span>
-              {['all', 'supported', 'partial', 'not_supported', 'inferred'].map((status) => (
+              {statusFilterOptions.map((status) => (
                 <button
                   key={status}
                   onClick={() => setFilterStatus(status)}

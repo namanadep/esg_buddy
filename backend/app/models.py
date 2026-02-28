@@ -182,6 +182,7 @@ class ClauseMatchRequest(BaseModel):
     document_id: str
     framework: ESGFramework
     clause_ids: Optional[List[str]] = None  # If None, evaluate all clauses
+    document_filename: Optional[str] = None  # Display name for the report (from the document user selected)
 
 
 class ComplianceOverrideRequest(BaseModel):

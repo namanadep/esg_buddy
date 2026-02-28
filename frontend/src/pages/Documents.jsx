@@ -47,11 +47,11 @@ const Documents = () => {
     }
   }
   
-  const handleEvaluate = async (documentId) => {
+  const handleEvaluate = async (documentId, filename) => {
     setEvaluating(documentId)
     
     try {
-      const result = await evaluateCompliance(documentId, selectedFramework)
+      const result = await evaluateCompliance(documentId, selectedFramework, null, filename)
       alert(`Evaluation started! Report ID: ${result.report_id}`)
       // Could navigate to the report detail page
     } catch (error) {
@@ -187,7 +187,7 @@ const Documents = () => {
                       
                       <div className="flex items-center space-x-2 ml-4">
                         <button
-                          onClick={() => handleEvaluate(doc.document_id)}
+                          onClick={() => handleEvaluate(doc.document_id, doc.filename)}
                           disabled={evaluating === doc.document_id}
                           className="p-3 bg-forest-50 text-forest-600 hover:bg-forest-100 rounded-xl transition-colors disabled:opacity-50"
                           title="Run Compliance Evaluation"
