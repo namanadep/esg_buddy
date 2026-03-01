@@ -17,9 +17,11 @@ import {
   Loader2,
   UserCheck,
   ThumbsUp,
-  ThumbsDown
+  ThumbsDown,
+  Target,
+  BarChart3
 } from 'lucide-react'
-import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation } from '../lib/api'
+import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation, getAccuracyMetrics } from '../lib/api'
 
 const ReportDetail = () => {
   const { reportId } = useParams()
@@ -32,6 +34,8 @@ const ReportDetail = () => {
   const [filterStatus, setFilterStatus] = useState('all')
   const [overridingClauseId, setOverridingClauseId] = useState(null)
   const [overrideReason, setOverrideReason] = useState({})
+  const [accuracyMetrics, setAccuracyMetrics] = useState(null)
+  const [loadingAccuracy, setLoadingAccuracy] = useState(false)
 
   const CONFIDENCE_THRESHOLD = 0.7
 
@@ -53,6 +57,25 @@ const ReportDetail = () => {
     
     loadReport()
   }, [reportId])
+
+  // Load accuracy metrics when report loads
+  useEffect(() => {
+    const loadAccuracy = async () => {
+      if (!report) return
+      setLoadingAccuracy(true)
+      try {
+        const data = await getAccuracyMetrics(reportId)
+        console.log('Accuracy metrics loaded:', data)
+        setAccuracyMetrics(data)
+      } catch (err) {
+        console.error('Error loading accuracy:', err)
+        setAccuracyMetrics({ error: err.message })
+      } finally {
+        setLoadingAccuracy(false)
+      }
+    }
+    loadAccuracy()
+  }, [report, reportId])
 
   const isAmbiguous = (e) => {
     if (e.override_applied) return false
@@ -269,6 +292,78 @@ const ReportDetail = () => {
               ))}
             </div>
           </div>
+
+          {/* Accuracy Metrics - Ground Truth Comparison */}
+          {!loadingAccuracy && accuracyMetrics && (
+            <div className={`rounded-xl shadow-lg border p-6 mb-6 ${
+              accuracyMetrics.metrics && accuracyMetrics.ground_truth_loaded > 0
+                ? 'bg-blue-50/80 border-blue-200'
+                : 'bg-gray-50/80 border-gray-200'
+            }`}>
+              <h2 className="font-display text-xl font-bold text-ink-900 mb-1 flex items-center">
+                <Target className={`w-6 h-6 mr-2 ${
+                  accuracyMetrics.metrics && accuracyMetrics.ground_truth_loaded > 0 ? 'text-blue-600' : 'text-gray-600'
+                }`} />
+                Ground Truth Accuracy
+              </h2>
+              
+              {accuracyMetrics.metrics && accuracyMetrics.ground_truth_loaded > 0 ? (
+                <>
+                  <p className="text-sm text-ink-600 mb-4">
+                    Verified against {accuracyMetrics.ground_truth_loaded} manually labeled clauses for {report.document_metadata?.filename || report.document_filename}
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-white rounded-lg border border-blue-200 p-4">
+                      <div className="text-2xl font-display font-bold text-blue-600 mb-1">
+                        {Math.round(accuracyMetrics.metrics.llm_precision * 100)}%
+                      </div>
+                      <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
+                        Precision
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-lg border border-blue-200 p-4">
+                      <div className="text-2xl font-display font-bold text-blue-600 mb-1">
+                        {Math.round(accuracyMetrics.metrics.llm_recall * 100)}%
+                      </div>
+                      <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
+                        Recall
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-lg border border-blue-200 p-4">
+                      <div className="text-2xl font-display font-bold text-blue-600 mb-1">
+                        {Math.round(accuracyMetrics.metrics.llm_f1_score * 100)}%
+                      </div>
+                      <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
+                        F1 Score
+                      </div>
+                    </div>
+                    <div className="bg-white rounded-lg border border-blue-200 p-4">
+                      <div className="text-2xl font-display font-bold text-ink-900 mb-1">
+                        {accuracyMetrics.metrics.total_clauses_evaluated}
+                      </div>
+                      <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
+                        Clauses Verified
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm text-ink-600">
+                  {accuracyMetrics.error ? (
+                    <p className="text-red-600">Error loading accuracy: {accuracyMetrics.error}</p>
+                  ) : accuracyMetrics.note ? (
+                    <p>{accuracyMetrics.note}</p>
+                  ) : (
+                    <>
+                      <p className="mb-2">Ground truth not available for this report.</p>
+                      <p className="text-xs">Ground truth is available for: <strong>TCS BRSR.pdf</strong>, <strong>RIL BRSR.pdf</strong>, and <strong>TATA Motors BRSR.pdf</strong></p>
+                      <p className="text-xs mt-1">Debug: ground_truth_loaded = {accuracyMetrics.ground_truth_loaded || 0}</p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Human Verification Dashboard - always visible */}
           <div className="bg-amber-50/80 rounded-xl shadow-lg border border-amber-200 p-6 mb-6">

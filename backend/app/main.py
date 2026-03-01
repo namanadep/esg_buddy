@@ -41,6 +41,7 @@ from app.clause_parser_enhanced import EnhancedClauseParser
 from app.vector_store import VectorStore
 from app.compliance_pipeline import CompliancePipeline
 from app.accuracy import AccuracyEvaluator
+from app.ground_truth_loader import GroundTruthLoader
 
 # Configure logging
 logging.basicConfig(
@@ -69,6 +70,7 @@ app.add_middleware(
 vector_store = VectorStore()
 compliance_pipeline = CompliancePipeline()
 accuracy_evaluator = AccuracyEvaluator()
+ground_truth_loader = GroundTruthLoader()
 # Enhanced parser handles subdirectories and has LLM-based parsing option
 # Controlled by USE_LLM_PARSING in .env (default: False = regex, True = LLM)
 clause_parser = EnhancedClauseParser(use_llm=settings.use_llm_parsing)
@@ -760,16 +762,70 @@ async def add_ground_truth(labels: List[GroundTruthLabel]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/accuracy/load-ground-truth")
+async def load_ground_truth_from_files():
+    """
+    Load all ground truth labels from JSON files in Company Reports/BRSR Ground Truth/
+    
+    This loads TCS, RIL, and TATA Motors ground truth files and links them to existing reports.
+    """
+    try:
+        all_labels = ground_truth_loader.load_all_ground_truth()
+        
+        total_loaded = 0
+        matched_reports = 0
+        
+        for company, labels in all_labels.items():
+            # Find matching report(s) by filename
+            for report in compliance_reports.values():
+                if company.upper() in report.document_metadata.filename.upper():
+                    # Update document_id for all labels
+                    for label in labels:
+                        label.document_id = report.document_id
+                    
+                    accuracy_evaluator.add_ground_truth(labels)
+                    total_loaded += len(labels)
+                    matched_reports += 1
+                    logger.info(f"Linked {len(labels)} ground truth labels to {report.document_metadata.filename}")
+        
+        return {
+            "message": f"Loaded ground truth from {len(all_labels)} companies",
+            "companies": list(all_labels.keys()),
+            "total_labels": total_loaded,
+            "matched_reports": matched_reports,
+            "labels_by_company": {k: len(v) for k, v in all_labels.items()}
+        }
+        
+    except Exception as e:
+        logger.error(f"Error loading ground truth from files: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/accuracy/metrics/{report_id}")
 async def get_accuracy_metrics(report_id: str):
-    """Calculate accuracy metrics for a report"""
+    """Calculate accuracy metrics for a report using ground truth if available"""
     if report_id not in compliance_reports:
         raise HTTPException(status_code=404, detail="Report not found")
     
     report = compliance_reports[report_id]
     
     try:
-        # Try to calculate against ground truth
+        # Extract system clause IDs from the report for matching
+        system_clause_ids = [e.clause_id for e in report.evaluations]
+        
+        # Try to load ground truth for this document (with system clause IDs for aggregation)
+        ground_truth_labels = ground_truth_loader.load_ground_truth_for_document(
+            document_id=report.document_id,
+            document_filename=report.document_metadata.filename,
+            system_clause_ids=system_clause_ids
+        )
+        
+        if ground_truth_labels:
+            # Add ground truth to accuracy evaluator
+            accuracy_evaluator.add_ground_truth(ground_truth_labels)
+            logger.info(f"Loaded {len(ground_truth_labels)} ground truth labels for accuracy evaluation")
+        
+        # Calculate metrics (will use ground truth if available)
         metrics = accuracy_evaluator.evaluate_accuracy(
             evaluations=report.evaluations,
             document_id=report.document_id
@@ -777,6 +833,8 @@ async def get_accuracy_metrics(report_id: str):
         
         return {
             "report_id": report_id,
+            "document_filename": report.document_metadata.filename,
+            "ground_truth_loaded": len(ground_truth_labels) if ground_truth_labels else 0,
             "metrics": metrics.model_dump()
         }
         
@@ -915,7 +973,8 @@ async def get_system_stats():
         "documents": len(documents_metadata),
         "reports": len(compliance_reports),
         "clauses_parsed": len(parsed_clauses.get('all', [])),
-        "ground_truth_labels": len(accuracy_evaluator.ground_truth)
+        "ground_truth_labels": len(accuracy_evaluator.ground_truth),
+        "ground_truth_available": ["TCS", "RIL", "TATA Motors"]
     }
 
 
