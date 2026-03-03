@@ -19,14 +19,20 @@ logger = logging.getLogger(__name__)
 class GroundTruthLoader:
     """Load and manage ground truth labels from JSON files"""
     
-    def __init__(self, ground_truth_dir: str = "Company Reports/BRSR Ground Truth"):
-        self.ground_truth_dir = Path(ground_truth_dir)
+    def __init__(self, ground_truth_dir: str = None):
+        if ground_truth_dir:
+            self.ground_truth_dir = Path(ground_truth_dir)
+        else:
+            # Resolve relative to project root (parent of backend/)
+            project_root = Path(__file__).resolve().parent.parent.parent
+            self.ground_truth_dir = project_root / "Company Reports" / "BRSR Ground Truth"
         self.company_mappings = {
             "TCS": "TCS Ground Truth.json",
             "RIL": "RIL Ground Truth.json",
             "TATA Motors": "TATA Motors Ground Truth.json",
             "Tata Motors": "TATA Motors Ground Truth.json"
         }
+        logger.info(f"Ground truth directory: {self.ground_truth_dir} (exists: {self.ground_truth_dir.exists()})")
     
     def load_ground_truth_for_document(
         self, 
