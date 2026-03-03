@@ -36,6 +36,9 @@ const ReportDetail = () => {
   const [overrideReason, setOverrideReason] = useState({})
   const [accuracyMetrics, setAccuracyMetrics] = useState(null)
   const [loadingAccuracy, setLoadingAccuracy] = useState(false)
+  const [expandedVerificationClause, setExpandedVerificationClause] = useState(null)
+  const [verificationClauseDetail, setVerificationClauseDetail] = useState(null)
+  const [loadingVerificationDetail, setLoadingVerificationDetail] = useState(false)
 
   const CONFIDENCE_THRESHOLD = 0.7
 
@@ -85,6 +88,26 @@ const ReportDetail = () => {
   }
 
   const ambiguousClauses = report ? report.evaluations.filter(isAmbiguous) : []
+
+  const toggleVerificationDetails = async (clauseId) => {
+    if (expandedVerificationClause === clauseId) {
+      setExpandedVerificationClause(null)
+      setVerificationClauseDetail(null)
+      return
+    }
+    setExpandedVerificationClause(clauseId)
+    setVerificationClauseDetail(null)
+    setLoadingVerificationDetail(true)
+    try {
+      const detail = await getClauseEvaluationDetail(reportId, clauseId)
+      setVerificationClauseDetail(detail)
+    } catch (err) {
+      console.error('Error loading verification clause detail:', err)
+      setVerificationClauseDetail({ error: 'Failed to load details' })
+    } finally {
+      setLoadingVerificationDetail(false)
+    }
+  }
 
   const handleOverride = async (clauseId, newStatus) => {
     setOverridingClauseId(clauseId)
@@ -376,57 +399,163 @@ const ReportDetail = () => {
                 <p className="text-sm text-ink-600 mb-4">
                   {ambiguousClauses.length} clause{ambiguousClauses.length !== 1 ? 's' : ''} need your review (low confidence, partial, or inferred). Approve or reject to lock the status.
                 </p>
-                <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
-                  {ambiguousClauses.map((evaluation) => (
-                    <div
-                      key={evaluation.clause_id}
-                      className="bg-white rounded-lg border border-amber-200 p-4 flex flex-wrap items-center gap-3"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-ink-900 truncate">
-                          {evaluation.clause?.title || evaluation.clause_id}
+                <div className="space-y-3 max-h-[480px] overflow-y-auto pr-2">
+                  {ambiguousClauses.map((evaluation) => {
+                    const isDetailsOpen = expandedVerificationClause === evaluation.clause_id
+                    const detail = isDetailsOpen ? verificationClauseDetail : null
+                    return (
+                      <div
+                        key={evaluation.clause_id}
+                        className="bg-white rounded-lg border border-amber-200 overflow-hidden"
+                      >
+                        <div className="p-4 flex flex-wrap items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-ink-900 truncate">
+                              {evaluation.clause?.title || evaluation.clause_id}
+                            </div>
+                            <div className="text-xs text-ink-600 mt-0.5">
+                              <span className="font-mono">{evaluation.clause_id}</span>
+                              <span className="mx-2">•</span>
+                              <span className="capitalize">{evaluation.final_status.replace('_', ' ')}</span>
+                              <span className="mx-2">•</span>
+                              <span>Confidence: {Math.round((evaluation.final_confidence ?? 0) * 100)}%</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => toggleVerificationDetails(evaluation.clause_id)}
+                              className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-clay-100 text-ink-700 hover:bg-clay-200 border border-ink-200"
+                              aria-expanded={isDetailsOpen}
+                            >
+                              {isDetailsOpen ? (
+                                <ChevronDown className="w-4 h-4 mr-1" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4 mr-1" />
+                              )}
+                              Details
+                            </button>
+                            <input
+                              type="text"
+                              placeholder="Reason (optional)"
+                              value={overrideReason[evaluation.clause_id] || ''}
+                              onChange={(e) => setOverrideReason((prev) => ({ ...prev, [evaluation.clause_id]: e.target.value }))}
+                              className="px-3 py-1.5 text-sm border border-ink-200 rounded-lg w-40 focus:ring-2 focus:ring-forest-500 focus:border-forest-500"
+                            />
+                            <button
+                              onClick={() => handleOverride(evaluation.clause_id, 'supported')}
+                              disabled={overridingClauseId === evaluation.clause_id}
+                              className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-green-100 text-green-800 hover:bg-green-200 disabled:opacity-50"
+                            >
+                              {overridingClauseId === evaluation.clause_id ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <>
+                                  <ThumbsUp className="w-4 h-4 mr-1" />
+                                  Approve
+                                </>
+                              )}
+                            </button>
+                            <button
+                              onClick={() => handleOverride(evaluation.clause_id, 'not_supported')}
+                              disabled={overridingClauseId === evaluation.clause_id}
+                              className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-red-100 text-red-800 hover:bg-red-200 disabled:opacity-50"
+                            >
+                              <ThumbsDown className="w-4 h-4 mr-1" />
+                              Reject
+                            </button>
+                          </div>
                         </div>
-                        <div className="text-xs text-ink-600 mt-0.5">
-                          <span className="font-mono">{evaluation.clause_id}</span>
-                          <span className="mx-2">•</span>
-                          <span className="capitalize">{evaluation.final_status.replace('_', ' ')}</span>
-                          <span className="mx-2">•</span>
-                          <span>Confidence: {Math.round((evaluation.final_confidence ?? 0) * 100)}%</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <input
-                          type="text"
-                          placeholder="Reason (optional)"
-                          value={overrideReason[evaluation.clause_id] || ''}
-                          onChange={(e) => setOverrideReason((prev) => ({ ...prev, [evaluation.clause_id]: e.target.value }))}
-                          className="px-3 py-1.5 text-sm border border-ink-200 rounded-lg w-40 focus:ring-2 focus:ring-forest-500 focus:border-forest-500"
-                        />
-                        <button
-                          onClick={() => handleOverride(evaluation.clause_id, 'supported')}
-                          disabled={overridingClauseId === evaluation.clause_id}
-                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-green-100 text-green-800 hover:bg-green-200 disabled:opacity-50"
-                        >
-                          {overridingClauseId === evaluation.clause_id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <>
-                              <ThumbsUp className="w-4 h-4 mr-1" />
-                              Approve
-                            </>
+                        <AnimatePresence>
+                          {isDetailsOpen && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.2 }}
+                              className="border-t border-amber-200 bg-amber-50/50 overflow-hidden"
+                            >
+                              <div className="p-4">
+                                {loadingVerificationDetail ? (
+                                  <div className="flex items-center justify-center py-8">
+                                    <Loader2 className="w-6 h-6 text-forest-600 animate-spin" />
+                                  </div>
+                                ) : detail?.error ? (
+                                  <p className="text-sm text-red-600">{detail.error}</p>
+                                ) : detail?.llm_evaluation ? (
+                                  <div className="space-y-4 text-sm">
+                                    <div>
+                                      <h4 className="font-semibold text-ink-800 mb-1 flex items-center">
+                                        <Zap className="w-4 h-4 mr-2 text-forest-600" />
+                                        AI Explanation
+                                      </h4>
+                                      <p className="text-ink-700 leading-relaxed pl-6">
+                                        {detail.llm_evaluation.explanation}
+                                      </p>
+                                    </div>
+                                    {detail.llm_evaluation.reasoning && (
+                                      <div>
+                                        <h4 className="font-semibold text-ink-800 mb-1">Reasoning</h4>
+                                        <p className="text-ink-600 leading-relaxed pl-6">
+                                          {detail.llm_evaluation.reasoning}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {detail.retrieved_evidence?.length > 0 && (
+                                      <div>
+                                        <h4 className="font-semibold text-ink-800 mb-2 flex items-center">
+                                          <FileText className="w-4 h-4 mr-2 text-forest-600" />
+                                          Retrieved Evidence ({detail.retrieved_evidence.length})
+                                        </h4>
+                                        <div className="space-y-2 pl-6 max-h-48 overflow-y-auto">
+                                          {detail.retrieved_evidence.slice(0, 5).map((ev) => (
+                                            <div
+                                              key={ev.chunk_id}
+                                              className="p-3 bg-white rounded-lg border border-ink-200"
+                                            >
+                                              <span className="text-xs text-ink-500">
+                                                Page {ev.page_number}
+                                                {ev.similarity_score != null && ` • ${Math.round(ev.similarity_score * 100)}% match`}
+                                              </span>
+                                              <p className="text-ink-700 mt-1 line-clamp-3">{ev.text}</p>
+                                            </div>
+                                          ))}
+                                          {detail.retrieved_evidence.length > 5 && (
+                                            <p className="text-xs text-ink-500">
+                                              +{detail.retrieved_evidence.length - 5} more chunk(s)
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {detail.rule_results?.length > 0 && (
+                                      <div>
+                                        <h4 className="font-semibold text-ink-800 mb-1 flex items-center">
+                                          <Shield className="w-4 h-4 mr-2 text-forest-600" />
+                                          Rule validation
+                                        </h4>
+                                        <ul className="pl-6 space-y-1">
+                                          {detail.rule_results.map((r) => (
+                                            <li
+                                              key={r.rule_id}
+                                              className={r.passed ? 'text-green-700' : 'text-red-700'}
+                                            >
+                                              {r.rule_id}: {r.passed ? 'Passed' : 'Failed'}
+                                              {r.message && ` — ${r.message}`}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </motion.div>
                           )}
-                        </button>
-                        <button
-                          onClick={() => handleOverride(evaluation.clause_id, 'not_supported')}
-                          disabled={overridingClauseId === evaluation.clause_id}
-                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-red-100 text-red-800 hover:bg-red-200 disabled:opacity-50"
-                        >
-                          <ThumbsDown className="w-4 h-4 mr-1" />
-                          Reject
-                        </button>
+                        </AnimatePresence>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </>
             ) : (
