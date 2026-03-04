@@ -78,28 +78,43 @@ class EnhancedClauseParser:
         return all_clauses
     
     def _filter_essential_gri_files(self, pdf_files: List[Path]) -> List[Path]:
-        """Filter GRI PDFs to only essential standards (not industry-specific)."""
-        essential_patterns = [
-            'GRI 1_', 'GRI 2_', 'GRI 3_',  # Universal
-            'GRI 201_', 'GRI 205_', 'GRI 207_',  # Economic
-            'GRI 302_', 'GRI 303_', 'GRI 305_',  # Environmental
-            'GRI 401_', 'GRI 403_', 'GRI 404_', 'GRI 405_', 'GRI 413_'  # Social
+        """Filter GRI PDFs by scope: core (~40) | standard (~120) | essential (~140+)."""
+        scope = getattr(settings, "gri_scope", "standard").strip().lower()
+        # Core = only universal (GRI 1, 2, 3) ~35-45 clauses
+        core_patterns = ['GRI 1_', 'GRI 2_', 'GRI 3_']
+        # Standard = universal + most-used topic standards, targets ~120 clauses
+        standard_patterns = [
+            'GRI 1_', 'GRI 2_', 'GRI 3_',
+            'GRI 201_', 'GRI 205_', 'GRI 207_',
+            'GRI 302_', 'GRI 303_', 'GRI 305_',
+            'GRI 401_', 'GRI 404_', 'GRI 405_'  # omit 403, 413 to keep ~120
         ]
-        # For waste, prefer 2020 version
+        # Essential = standard + 403 (OHS), 413 (Local communities) ~140-150 clauses
+        essential_patterns = [
+            'GRI 1_', 'GRI 2_', 'GRI 3_',
+            'GRI 201_', 'GRI 205_', 'GRI 207_',
+            'GRI 302_', 'GRI 303_', 'GRI 305_',
+            'GRI 401_', 'GRI 403_', 'GRI 404_', 'GRI 405_', 'GRI 413_'
+        ]
+        if scope == "core":
+            patterns = core_patterns
+        elif scope == "standard":
+            patterns = standard_patterns
+        else:
+            patterns = essential_patterns
         essential_files = []
         waste_2020_found = False
         for pdf in pdf_files:
             name = pdf.name
-            # Check if it's an essential standard
-            if any(name.startswith(pattern) for pattern in essential_patterns):
+            if any(name.startswith(p) for p in patterns):
                 essential_files.append(pdf)
-            # For GRI 306 (Waste), only take 2020 version
-            elif name.startswith('GRI 306_'):
+            elif scope != "core" and name.startswith('GRI 306_'):
                 if '2020' in name:
                     essential_files.append(pdf)
                     waste_2020_found = True
                 elif not waste_2020_found and '2016' not in name:
                     essential_files.append(pdf)
+        logger.info(f"GRI scope={scope}: {len(essential_files)} PDFs (target ~120 for standard)")
         return essential_files
     
     def _filter_essential_sasb_files(self, pdf_files: List[Path]) -> List[Path]:

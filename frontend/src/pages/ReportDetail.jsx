@@ -275,7 +275,7 @@ const ReportDetail = () => {
                 <div className="flex items-center justify-end space-x-2 mb-1">
                   <TrendingUp className="w-6 h-6 text-forest-600" />
                   <span className="text-4xl font-display font-bold text-forest-600">
-                    {Math.round(report.summary.compliance_rate * 100)}%
+                    {(report.summary.compliance_rate * 100).toFixed(1)}%
                   </span>
                 </div>
                 <div className="text-sm text-ink-500 font-medium">

@@ -193,8 +193,8 @@ const Reports = () => {
                         <div className="text-right ml-4">
                           <div className="flex items-center space-x-2 mb-1">
                             <TrendingUp className="w-5 h-5 text-forest-600" />
-                            <span className="text-3xl font-display font-bold text-forest-600">
-                              {Math.round(report.summary.compliance_rate * 100)}%
+                            <span className="text-3xl font-display font-bold text-forest-600" title={`${(report.summary.compliance_rate * 100).toFixed(2)}% (supported + inferred) / total`}>
+                              {(report.summary.compliance_rate * 100).toFixed(1)}%
                             </span>
                           </div>
                           <div className="text-sm text-ink-500 font-medium">

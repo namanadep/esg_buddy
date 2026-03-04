@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     parse_frameworks: str = "BRSR,GRI,TCFD,SASB"  # All frameworks enabled
     # Frameworks to always re-parse on startup (never load from DB). e.g. "GRI"
     reparse_frameworks_on_startup: str = ""  # All frameworks load from DB (no reparsing)
+    # GRI clause scope: "core" (~35-45) | "standard" (~120) | "essential" (~140-150)
+    gri_scope: str = "standard"
     
     # Chunking Configuration
     chunk_size: int = 512

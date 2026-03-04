@@ -875,8 +875,9 @@ async def get_benchmark_stats():
 @app.post("/system/reparse-framework")
 async def reparse_framework(framework: str):
     """
-    Re-parse a single framework (e.g. TCFD, BRSR), clear its clauses from the vector store,
-    then parse from PDFs and re-index. Use this to refresh clauses after code or document changes.
+    Re-parse only one framework (e.g. GRI, BRSR, TCFD, SASB). Clears that framework's clauses
+    from the vector store, parses from PDFs, and re-indexes. Other frameworks are unchanged.
+    Query param: framework=GRI (or BRSR, TCFD, SASB).
     """
     try:
         fw_upper = framework.strip().upper()
