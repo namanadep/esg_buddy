@@ -1,211 +1,273 @@
 """
-Regenerate ground truth files using the ACTUAL clause IDs from the system's reports.
+Regenerate BRSR ground truth JSONs for TCS, RIL, and TATA Motors.
 
-The system uses clause IDs like BRSR-Core-GHG-Scope1-TotalEmissions (hyphenated, semantic)
-NOT BRSR_Core_1_Green-house_gas_GHG_footprint (from clause_parser_enhanced.py).
+- Uses the EXACT clause_id list from your largest saved BRSR compliance report (fixes
+  ground_truth_loaded = 0 when old GT files used different IDs than current reports).
+- Labels: Compliant | Partial | Non-Compliant only (no Inferred — aligns with app removal
+  of inferred; anything the model marks Inferred is saved as Partial).
 
-This script extracts the actual clause IDs from existing compliance reports
-and creates ground truth templates that match them exactly.
+Run from project root OR from backend/:
+  cd backend && python regenerate_correct_ground_truth.py
+
+Requires: OPENAI_API_KEY, PyMuPDF (fitz), PDFs for each company.
 """
 
 import json
 import os
-import re
+import sys
 from pathlib import Path
+from typing import Optional
 from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# backend/ directory
+BACKEND_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BACKEND_DIR.parent
+REPORTS_FILE = BACKEND_DIR / "data" / "compliance_reports.json"
+GT_DIR = PROJECT_ROOT / "Company Reports" / "BRSR Ground Truth"
 
-COMPANY_PDFS = {
-    "TCS": "Company Reports/TCS BRSR.pdf",
-    "RIL": "Company Reports/RIL BRSR.pdf",
-    "TATA Motors": "Company Reports/TATA Motors BRSR.pdf"
+COMPANY_PDF_CANDIDATES = {
+    "TCS": [
+        PROJECT_ROOT / "Company Reports" / "TCS BRSR.pdf",
+        BACKEND_DIR / "data" / "uploads" / "TCS BRSR.pdf",
+    ],
+    "RIL": [
+        PROJECT_ROOT / "Company Reports" / "RIL BRSR.pdf",
+        BACKEND_DIR / "data" / "uploads" / "RIL BRSR.pdf",
+    ],
+    "TATA Motors": [
+        PROJECT_ROOT / "Company Reports" / "TATA Motors BRSR.pdf",
+        BACKEND_DIR / "data" / "uploads" / "TATA Motors BRSR.pdf",
+    ],
 }
 
-def get_system_clause_ids():
-    """Extract actual BRSR clause IDs from existing compliance reports"""
-    reports_file = Path("backend/data/compliance_reports.json")
-    
-    if not reports_file.exists():
-        print("ERROR: compliance_reports.json not found")
+load_dotenv(BACKEND_DIR / ".env")
+load_dotenv(PROJECT_ROOT / "backend" / ".env")
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    print("ERROR: OPENAI_API_KEY not set (.env in backend/)")
+    sys.exit(1)
+client = OpenAI(api_key=api_key)
+
+
+def normalize_compliance_status(raw: str) -> str:
+    """Map model output to loader-expected labels (no Inferred)."""
+    s = (raw or "").strip().lower().replace("_", "-")
+    if s in ("inferred", "infer"):
+        return "Partial"
+    if s in ("compliant", "yes", "supported"):
+        return "Compliant"
+    if s in ("partial", "partially compliant"):
+        return "Partial"
+    if s in ("non-compliant", "non compliant", "not compliant", "not-supported", "not_supported"):
+        return "Non-Compliant"
+    return "Non-Compliant"
+
+
+def resolve_pdf(company: str) -> Optional[Path]:
+    for p in COMPANY_PDF_CANDIDATES.get(company, []):
+        if p.exists():
+            return p
+    return None
+
+
+def get_system_clause_ids() -> list:
+    """
+    Prefer clause order from the BRSR report with the most evaluations (matches UI reports).
+    """
+    if not REPORTS_FILE.exists():
+        print(f"ERROR: {REPORTS_FILE} not found. Run a BRSR evaluation first.")
         return []
-    
-    with open(reports_file, 'r', encoding='utf-8') as f:
-        data = f.read()
-    
-    # Extract all clause IDs used in BRSR reports
-    ids = re.findall(r'"clause_id": "([^"]+)"', data)
-    unique = sorted(set(ids))
-    
-    # Filter to only BRSR clause IDs
-    brsr_ids = [x for x in unique if x.startswith('BRSR')]
-    
-    print(f"Found {len(brsr_ids)} unique BRSR clause IDs in existing reports")
-    return brsr_ids
 
-def extract_pdf_text(pdf_path):
-    """Extract text from PDF"""
+    with open(REPORTS_FILE, "r", encoding="utf-8") as f:
+        reports = json.load(f)
+
+    best_ids: list = []
+    best_name = None
+    for _rid, rep in reports.items():
+        if rep.get("framework") != "BRSR":
+            continue
+        ev = rep.get("evaluations") or []
+        ids = [
+            e["clause_id"]
+            for e in ev
+            if isinstance(e, dict) and str(e.get("clause_id", "")).startswith("BRSR")
+        ]
+        if len(ids) > len(best_ids):
+            best_ids = ids
+            best_name = (rep.get("document_metadata") or {}).get("filename")
+
+    if best_ids:
+        print(f"Using {len(best_ids)} BRSR clause IDs from report: {best_name or '(unknown)'}")
+        return best_ids
+
+    print("ERROR: No BRSR report found in compliance_reports.json")
+    return []
+
+
+def extract_pdf_text(pdf_path: Path) -> str:
     import fitz
-    doc = fitz.open(pdf_path)
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    doc.close()
-    return text
 
-def analyze_clauses_batch(pdf_text, clause_ids, company_name):
-    """Use AI to analyze compliance for a batch of clauses"""
-    
-    # Send batches of clause IDs to AI for efficiency
-    batch_size = 30
+    doc = fitz.open(pdf_path)
+    parts = []
+    for page in doc:
+        parts.append(page.get_text())
+    doc.close()
+    return "\n".join(parts)
+
+
+def analyze_clauses_batch(pdf_text: str, clause_ids: list, company_name: str) -> dict:
+    batch_size = 25
     results = {}
-    
+    # More context for Annexure sections (still one excerpt; extend size)
+    excerpt = pdf_text[:120000] if len(pdf_text) > 120000 else pdf_text
+
     for i in range(0, len(clause_ids), batch_size):
-        batch = clause_ids[i:i+batch_size]
-        batch_str = "\n".join([f"- {cid}" for cid in batch])
-        
-        # Use relevant text sections
-        # For BRSR Core, look for sections with relevant keywords
-        relevant_text = pdf_text[:30000]  # First 30K chars usually contain BRSR Core
-        
+        batch = clause_ids[i : i + batch_size]
+        batch_str = "\n".join(f"- {cid}" for cid in batch)
+
         prompt = f"""Analyze this {company_name} BRSR report and determine compliance status for each clause below.
 
 **BRSR Report Text (excerpt):**
-{relevant_text}
+{excerpt}
 
 **Clauses to evaluate ({len(batch)}):**
 {batch_str}
 
-**Classification Rules:**
-- "Compliant": Data/disclosure explicitly present (numbers, tables, narratives, "0", "Nil", "NA" with reason)
-- "Partial": Some data present but key elements missing
-- "Inferred": Can be reasonably inferred from other disclosures
-- "Non-Compliant": No disclosure, no explanation, field blank
+**Use exactly THREE labels only (do not use "Inferred" or any other label):**
+- **Compliant**: Disclosure clearly present (data, table, narrative, cross-reference, or "0"/"Nil"/"NA" with reason).
+- **Partial**: Some relevant disclosure but incomplete, indirect, implied only, or missing a key part of the requirement.
+- **Non-Compliant**: No disclosure or no reasonable proxy.
 
-**Respond with a JSON array. Each entry must have:**
-- clause_id: exact ID from the list above
-- compliance_status: "Compliant" | "Partial" | "Inferred" | "Non-Compliant"
-- comments: brief explanation (1 sentence)
+Return a JSON object with a single key "entries" whose value is an array of objects, each with:
+- "clause_id": exact ID from the list above
+- "compliance_status": "Compliant" | "Partial" | "Non-Compliant"
+- "comments": one short sentence
 
-**Respond with ONLY the JSON array, nothing else.**"""
+Use **Partial** where disclosure is weak, indirect, or incomplete (do not use any other label)."""
 
         try:
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are an expert BRSR compliance analyst. Return ONLY valid JSON arrays."},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "You are an expert BRSR analyst. Return ONLY valid JSON with an object containing an 'entries' array.",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
             )
-            
             result = json.loads(response.choices[0].message.content)
-            
-            # Handle both {results: [...]} and [...] formats
-            if isinstance(result, dict):
-                entries = result.get("results", result.get("clauses", result.get("data", [])))
-                if not entries:
-                    for key in result:
-                        if isinstance(result[key], list):
-                            entries = result[key]
-                            break
-            else:
-                entries = result
-            
+            entries = result.get("entries", [])
+            if not entries and isinstance(result, dict):
+                for _k, v in result.items():
+                    if isinstance(v, list):
+                        entries = v
+                        break
+
             for entry in entries:
                 cid = entry.get("clause_id", "")
                 if cid in batch:
+                    status = normalize_compliance_status(entry.get("compliance_status", ""))
+                    # Display format expected by ground_truth_loader (title case Partial/Compliant/Non-Compliant)
+                    display = (
+                        "Compliant"
+                        if status == "Compliant"
+                        else ("Partial" if status == "Partial" else "Non-Compliant")
+                    )
                     results[cid] = {
-                        "compliance_status": entry.get("compliance_status", "Non-Compliant"),
-                        "comments": entry.get("comments", "")
+                        "compliance_status": display,
+                        "comments": entry.get("comments", "") or "",
                     }
-            
-            print(f"  Batch {i//batch_size + 1}: analyzed {len(entries)} clauses")
-            
+
+            print(f"  Batch {i // batch_size + 1}: got {len(entries)} rows for {len(batch)} clauses")
         except Exception as e:
-            print(f"  ERROR in batch {i//batch_size + 1}: {e}")
+            print(f"  ERROR in batch {i // batch_size + 1}: {e}")
             for cid in batch:
                 results[cid] = {
                     "compliance_status": "Non-Compliant",
-                    "comments": f"Analysis error: {e}"
+                    "comments": f"Analysis error: {e}",
                 }
-    
+
     return results
 
-def generate_ground_truth(company_name, clause_ids):
-    """Generate ground truth for one company"""
-    pdf_path = COMPANY_PDFS.get(company_name)
-    if not pdf_path or not Path(pdf_path).exists():
-        print(f"ERROR: PDF not found: {pdf_path}")
+
+def generate_ground_truth(company_name: str, clause_ids: list) -> None:
+    pdf_path = resolve_pdf(company_name)
+    if not pdf_path:
+        print(f"ERROR: No PDF found for {company_name}. Tried:")
+        for p in COMPANY_PDF_CANDIDATES.get(company_name, []):
+            print(f"  - {p}")
         return
-    
+
     print(f"\nProcessing: {company_name}")
     print(f"PDF: {pdf_path}")
-    print(f"Clauses to evaluate: {len(clause_ids)}")
-    
-    # Extract PDF text
+    print(f"Clauses: {len(clause_ids)}")
+
     print("Extracting PDF text...")
     pdf_text = extract_pdf_text(pdf_path)
     print(f"Extracted {len(pdf_text)} characters")
-    
-    # Analyze with AI
-    print("Analyzing with AI...")
+
+    print("Analyzing with OpenAI (this may take several minutes)...")
     results = analyze_clauses_batch(pdf_text, clause_ids, company_name)
-    
-    # Build ground truth JSON
+
     ground_truth = []
     for cid in clause_ids:
-        entry = results.get(cid, {"compliance_status": "Non-Compliant", "comments": "Not analyzed"})
-        ground_truth.append({
-            "clause_id": cid,
-            "compliance_status": entry["compliance_status"],
-            "comments": entry["comments"]
-        })
-    
-    # Save
-    output_file = Path(f"Company Reports/BRSR Ground Truth/{company_name} Ground Truth.json")
-    with open(output_file, 'w', encoding='utf-8') as f:
+        entry = results.get(
+            cid,
+            {"compliance_status": "Non-Compliant", "comments": "Not analyzed"},
+        )
+        st = normalize_compliance_status(entry["compliance_status"])
+        ground_truth.append(
+            {
+                "clause_id": cid,
+                "compliance_status": st,
+                "comments": entry.get("comments", "") or "",
+            }
+        )
+
+    GT_DIR.mkdir(parents=True, exist_ok=True)
+    out_name = (
+        "TATA Motors Ground Truth.json"
+        if company_name == "TATA Motors"
+        else f"{company_name} Ground Truth.json"
+    )
+    output_file = GT_DIR / out_name
+    with open(output_file, "w", encoding="utf-8") as f:
         json.dump(ground_truth, f, indent=2, ensure_ascii=False)
-    
-    # Summary
-    statuses = {}
-    for entry in ground_truth:
-        s = entry["compliance_status"]
-        statuses[s] = statuses.get(s, 0) + 1
-    
+
+    counts = {}
+    for row in ground_truth:
+        counts[row["compliance_status"]] = counts.get(row["compliance_status"], 0) + 1
     print(f"Saved: {output_file}")
-    print(f"Summary: {statuses}")
+    print(f"Summary: {counts}")
+
 
 def main():
-    print("Regenerating Ground Truth with CORRECT Clause IDs")
-    print("="*60)
-    
-    # Get actual system clause IDs
+    print("Regenerating BRSR Ground Truth (no Inferred; IDs match current reports)")
+    print("=" * 60)
+
     clause_ids = get_system_clause_ids()
     if not clause_ids:
-        print("No clause IDs found!")
-        return
-    
-    print(f"\nSample IDs:")
-    for cid in clause_ids[:5]:
-        print(f"  {cid}")
-    print(f"  ... ({len(clause_ids)} total)")
-    
-    # Generate for each company
+        sys.exit(1)
+
+    print("First clause_ids:", ", ".join(clause_ids[:5]), "...")
+
     for company in ["TCS", "RIL", "TATA Motors"]:
         try:
             generate_ground_truth(company, clause_ids)
         except Exception as e:
-            print(f"ERROR: {company}: {e}")
+            print(f"ERROR {company}: {e}")
             import traceback
+
             traceback.print_exc()
-    
-    print(f"\n{'='*60}")
-    print("Done! Ground truth files regenerated with correct clause IDs.")
-    print("Restart backend and generate a new report to see accuracy metrics.")
+
+    print("\n" + "=" * 60)
+    print("Done. Restart the backend and open a BRSR report for TCS / RIL / TATA Motors.")
+    print("Accuracy uses Compliant~supported, Partial~partial, Non-Compliant~not_supported.")
+
 
 if __name__ == "__main__":
     main()

@@ -3,18 +3,17 @@ ESGBuddy Data Models
 Pydantic models for type safety and validation
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
 
 
 class ComplianceStatus(str, Enum):
-    """Clause compliance status"""
+    """Clause compliance status (no inferred — use partial for indirect or incomplete disclosure)"""
     SUPPORTED = "supported"
     PARTIAL = "partial"
     NOT_SUPPORTED = "not_supported"
-    INFERRED = "inferred"
 
 
 class ESGFramework(str, Enum):
@@ -142,6 +141,31 @@ class ComplianceReport(BaseModel):
     summary: Dict[str, Any]
     generated_at: datetime = Field(default_factory=datetime.now)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_inferred_to_partial(cls, data: Any) -> Any:
+        """Legacy reports used 'inferred'; merge into partial and drop inferred from summary."""
+        if not isinstance(data, dict):
+            return data
+        for ev in data.get("evaluations") or []:
+            if not isinstance(ev, dict):
+                continue
+            if ev.get("final_status") == "inferred":
+                ev["final_status"] = "partial"
+            le = ev.get("llm_evaluation")
+            if isinstance(le, dict) and le.get("status") == "inferred":
+                le["status"] = "partial"
+        summ = data.get("summary")
+        if isinstance(summ, dict) and "inferred" in summ:
+            inf = int(summ.pop("inferred") or 0)
+            summ["partial"] = int(summ.get("partial") or 0) + inf
+            total = int(summ.get("total_clauses") or 0)
+            if total > 0:
+                sup = int(summ.get("supported") or 0)
+                part = int(summ.get("partial") or 0)
+                summ["compliance_rate"] = (sup + part) / total
+        return data
+
 
 # ============= Accuracy Measurement Models =============
 
@@ -160,6 +184,10 @@ class AccuracyMetrics(BaseModel):
     llm_precision: float
     llm_recall: float
     llm_f1_score: float
+    status_match_accuracy: float = Field(
+        0.0,
+        description="Fraction of clauses where final_status exactly matches ground truth label",
+    )
     rule_validation_precision: float
     confidence_calibration_error: float
     total_clauses_evaluated: int

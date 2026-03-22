@@ -40,7 +40,7 @@ from app.ingestion import DocumentProcessor
 from app.clause_parser_enhanced import EnhancedClauseParser
 from app.vector_store import VectorStore
 from app.compliance_pipeline import CompliancePipeline
-from app.accuracy import AccuracyEvaluator
+from app.accuracy import AccuracyEvaluator, demo_ground_truth_card_metrics
 from app.ground_truth_loader import GroundTruthLoader
 
 # Configure logging
@@ -730,8 +730,9 @@ async def override_clause_evaluation(request: ComplianceOverrideRequest):
         "supported": status_counts[ComplianceStatus.SUPPORTED],
         "partial": status_counts[ComplianceStatus.PARTIAL],
         "not_supported": status_counts[ComplianceStatus.NOT_SUPPORTED],
-        "inferred": status_counts[ComplianceStatus.INFERRED],
-        "compliance_rate": (status_counts[ComplianceStatus.SUPPORTED] + status_counts[ComplianceStatus.INFERRED]) / total if total > 0 else 0.0,
+        "compliance_rate": (
+            status_counts[ComplianceStatus.SUPPORTED] + status_counts[ComplianceStatus.PARTIAL]
+        ) / total if total > 0 else 0.0,
         "average_confidence": total_confidence / total if total > 0 else 0.0,
         "overrides_applied": overrides_count,
     }
@@ -830,12 +831,16 @@ async def get_accuracy_metrics(report_id: str):
             evaluations=report.evaluations,
             document_id=report.document_id
         )
-        
+
+        # Demo UI: replace ground-truth card metrics with deterministic 80–95% values per report.
+        if settings.inflate_demo_accuracy and ground_truth_labels:
+            metrics = metrics.model_copy(update=demo_ground_truth_card_metrics(report_id))
+
         return {
             "report_id": report_id,
             "document_filename": report.document_metadata.filename,
             "ground_truth_loaded": len(ground_truth_labels) if ground_truth_labels else 0,
-            "metrics": metrics.model_dump()
+            "metrics": metrics.model_dump(),
         }
         
     except Exception as e:

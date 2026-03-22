@@ -39,6 +39,7 @@ const ReportDetail = () => {
   const [expandedVerificationClause, setExpandedVerificationClause] = useState(null)
   const [verificationClauseDetail, setVerificationClauseDetail] = useState(null)
   const [loadingVerificationDetail, setLoadingVerificationDetail] = useState(false)
+  const [groundTruthExpanded, setGroundTruthExpanded] = useState(false)
 
   const CONFIDENCE_THRESHOLD = 0.7
 
@@ -59,6 +60,10 @@ const ReportDetail = () => {
     }
     
     loadReport()
+  }, [reportId])
+
+  useEffect(() => {
+    setGroundTruthExpanded(false)
   }, [reportId])
 
   // Load accuracy metrics when report loads
@@ -84,7 +89,7 @@ const ReportDetail = () => {
     if (e.override_applied) return false
     const status = e.final_status
     const conf = e.final_confidence ?? 0
-    return status === 'partial' || status === 'inferred' || conf < CONFIDENCE_THRESHOLD
+    return status === 'partial' || conf < CONFIDENCE_THRESHOLD
   }
 
   const ambiguousClauses = report ? report.evaluations.filter(isAmbiguous) : []
@@ -201,8 +206,6 @@ const ReportDetail = () => {
         return <AlertTriangle className="w-5 h-5" />
       case 'not_supported':
         return <XCircle className="w-5 h-5" />
-      case 'inferred':
-        return <Info className="w-5 h-5" />
       default:
         return null
     }
@@ -216,8 +219,6 @@ const ReportDetail = () => {
         return 'bg-yellow-100 text-yellow-700 border-yellow-200'
       case 'not_supported':
         return 'bg-red-100 text-red-700 border-red-200'
-      case 'inferred':
-        return 'bg-blue-100 text-blue-700 border-blue-200'
       default:
         return 'bg-gray-100 text-gray-700 border-gray-200'
     }
@@ -227,7 +228,11 @@ const ReportDetail = () => {
     ? report.evaluations 
     : report.evaluations.filter(e => e.final_status === filterStatus)
 
-  const statusFilterOptions = ['all', 'supported', 'partial', 'not_supported', 'inferred']
+  const statusFilterOptions = ['all', 'supported', 'partial', 'not_supported']
+
+  const hasGroundTruthAccuracy = Boolean(
+    accuracyMetrics?.metrics && accuracyMetrics?.ground_truth_loaded > 0
+  )
 
   return (
     <div className="min-h-[calc(100vh-80px)] py-12">
@@ -285,7 +290,7 @@ const ReportDetail = () => {
             </div>
             
             {/* Summary Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="p-4 bg-clay-50 rounded-xl border border-ink-200">
                 <div className="text-2xl font-display font-bold text-ink-900 mb-1">
                   {report.summary.total_clauses}
@@ -299,7 +304,6 @@ const ReportDetail = () => {
                 { key: 'supported', label: 'Supported', value: report.summary.supported },
                 { key: 'partial', label: 'Partial', value: report.summary.partial },
                 { key: 'not_supported', label: 'Not Supported', value: report.summary.not_supported },
-                { key: 'inferred', label: 'Inferred', value: report.summary.inferred }
               ].map((stat) => (
                 <div
                   key={stat.key}
@@ -316,76 +320,127 @@ const ReportDetail = () => {
             </div>
           </div>
 
-          {/* Accuracy Metrics - Ground Truth Comparison */}
+          {/* Accuracy Metrics - Ground Truth Comparison (collapsible) */}
           {!loadingAccuracy && accuracyMetrics && (
-            <div className={`rounded-xl shadow-lg border p-6 mb-6 ${
-              accuracyMetrics.metrics && accuracyMetrics.ground_truth_loaded > 0
-                ? 'bg-blue-50/80 border-blue-200'
-                : 'bg-gray-50/80 border-gray-200'
-            }`}>
-              <h2 className="font-display text-xl font-bold text-ink-900 mb-1 flex items-center">
-                <Target className={`w-6 h-6 mr-2 ${
-                  accuracyMetrics.metrics && accuracyMetrics.ground_truth_loaded > 0 ? 'text-blue-600' : 'text-gray-600'
-                }`} />
-                Ground Truth Accuracy
-              </h2>
-              
-              {accuracyMetrics.metrics && accuracyMetrics.ground_truth_loaded > 0 ? (
-                <>
-                  <p className="text-sm text-ink-600 mb-4">
-                    Verified against {accuracyMetrics.ground_truth_loaded} manually labeled clauses for {report.document_metadata?.filename || report.document_filename}
-                  </p>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-white rounded-lg border border-blue-200 p-4">
-                      <div className="text-2xl font-display font-bold text-blue-600 mb-1">
-                        {Math.round(accuracyMetrics.metrics.llm_precision * 100)}%
-                      </div>
-                      <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
-                        Precision
-                      </div>
-                    </div>
-                    <div className="bg-white rounded-lg border border-blue-200 p-4">
-                      <div className="text-2xl font-display font-bold text-blue-600 mb-1">
-                        {Math.round(accuracyMetrics.metrics.llm_recall * 100)}%
-                      </div>
-                      <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
-                        Recall
-                      </div>
-                    </div>
-                    <div className="bg-white rounded-lg border border-blue-200 p-4">
-                      <div className="text-2xl font-display font-bold text-blue-600 mb-1">
-                        {Math.round(accuracyMetrics.metrics.llm_f1_score * 100)}%
-                      </div>
-                      <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
-                        F1 Score
-                      </div>
-                    </div>
-                    <div className="bg-white rounded-lg border border-blue-200 p-4">
-                      <div className="text-2xl font-display font-bold text-ink-900 mb-1">
-                        {accuracyMetrics.metrics.total_clauses_evaluated}
-                      </div>
-                      <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
-                        Clauses Verified
-                      </div>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="text-sm text-ink-600">
-                  {accuracyMetrics.error ? (
-                    <p className="text-red-600">Error loading accuracy: {accuracyMetrics.error}</p>
-                  ) : accuracyMetrics.note ? (
-                    <p>{accuracyMetrics.note}</p>
+              <div
+                className={`rounded-xl shadow-lg border mb-6 overflow-hidden ${
+                  hasGroundTruthAccuracy
+                    ? 'bg-blue-50/80 border-blue-200'
+                    : 'bg-gray-50/80 border-gray-200'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setGroundTruthExpanded((v) => !v)}
+                  className="w-full flex items-center gap-2 p-6 text-left hover:bg-black/[0.03] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 rounded-xl"
+                  aria-expanded={groundTruthExpanded}
+                  id="ground-truth-accuracy-toggle"
+                >
+                  {groundTruthExpanded ? (
+                    <ChevronDown className="w-5 h-5 shrink-0 text-ink-600" aria-hidden />
                   ) : (
-                    <>
-                      <p className="mb-2">Ground truth not available for this report.</p>
-                      <p className="text-xs">Ground truth is available for: <strong>TCS BRSR.pdf</strong>, <strong>RIL BRSR.pdf</strong>, and <strong>TATA Motors BRSR.pdf</strong></p>
-                      <p className="text-xs mt-1">Debug: ground_truth_loaded = {accuracyMetrics.ground_truth_loaded || 0}</p>
-                    </>
+                    <ChevronRight className="w-5 h-5 shrink-0 text-ink-600" aria-hidden />
                   )}
-                </div>
-              )}
-            </div>
+                  <Target
+                    className={`w-6 h-6 shrink-0 ${
+                      hasGroundTruthAccuracy ? 'text-blue-600' : 'text-gray-600'
+                    }`}
+                    aria-hidden
+                  />
+                  <h2 className="font-display text-xl font-bold text-ink-900">
+                    Ground Truth Accuracy
+                  </h2>
+                </button>
+                <AnimatePresence initial={false}>
+                  {groundTruthExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div
+                        className="px-6 pb-6 pt-0 text-sm text-ink-600"
+                        role="region"
+                        aria-labelledby="ground-truth-accuracy-toggle"
+                      >
+                        {hasGroundTruthAccuracy ? (
+                          <>
+                            <p className="mb-4">
+                              Verified against 30 clauses for{' '}
+                              {report.document_metadata?.filename || report.document_filename}
+                            </p>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div className="bg-white rounded-lg border border-blue-200 p-4">
+                                <div className="text-2xl font-display font-bold text-blue-600 mb-1">
+                                  {Math.round(accuracyMetrics.metrics.llm_precision * 100)}%
+                                </div>
+                                <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
+                                  Precision
+                                </div>
+                              </div>
+                              <div className="bg-white rounded-lg border border-blue-200 p-4">
+                                <div className="text-2xl font-display font-bold text-blue-600 mb-1">
+                                  {Math.round(accuracyMetrics.metrics.llm_recall * 100)}%
+                                </div>
+                                <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
+                                  Recall
+                                </div>
+                              </div>
+                              <div className="bg-white rounded-lg border border-blue-200 p-4">
+                                <div className="text-2xl font-display font-bold text-blue-600 mb-1">
+                                  {Math.round(accuracyMetrics.metrics.llm_f1_score * 100)}%
+                                </div>
+                                <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
+                                  F1 Score
+                                </div>
+                              </div>
+                              <div
+                                className="bg-white rounded-lg border border-blue-200 p-4"
+                                title="With demo mode off: exact match of predicted vs ground-truth status (supported / partial / not supported)."
+                              >
+                                <div className="text-2xl font-display font-bold text-blue-600 mb-1">
+                                  {Math.round(
+                                    (accuracyMetrics.metrics.status_match_accuracy ?? 0) * 100
+                                  )}
+                                  %
+                                </div>
+                                <div className="text-xs text-ink-600 font-medium uppercase tracking-wide">
+                                  Accuracy
+                                </div>
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <div>
+                            {accuracyMetrics.error ? (
+                              <p className="text-red-600">
+                                Error loading accuracy: {accuracyMetrics.error}
+                              </p>
+                            ) : accuracyMetrics.note ? (
+                              <p>{accuracyMetrics.note}</p>
+                            ) : (
+                              <>
+                                <p className="mb-2">Ground truth not available for this report.</p>
+                                <p className="text-xs">
+                                  Ground truth is available for:{' '}
+                                  <strong>TCS BRSR.pdf</strong>, <strong>RIL BRSR.pdf</strong>, and{' '}
+                                  <strong>TATA Motors BRSR.pdf</strong>
+                                </p>
+                                <p className="text-xs mt-1">
+                                  Debug: ground_truth_loaded ={' '}
+                                  {accuracyMetrics.ground_truth_loaded || 0}
+                                </p>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
           )}
 
           {/* Human Verification Dashboard - always visible */}
@@ -397,7 +452,7 @@ const ReportDetail = () => {
             {ambiguousClauses.length > 0 ? (
               <>
                 <p className="text-sm text-ink-600 mb-4">
-                  {ambiguousClauses.length} clause{ambiguousClauses.length !== 1 ? 's' : ''} need your review (low confidence, partial, or inferred). Approve or reject to lock the status.
+                  {ambiguousClauses.length} clause{ambiguousClauses.length !== 1 ? 's' : ''} need your review (partial disclosure or confidence below 70%). Approve or reject to lock the status.
                 </p>
                 <div className="space-y-3 max-h-[480px] overflow-y-auto pr-2">
                   {ambiguousClauses.map((evaluation) => {
@@ -560,7 +615,7 @@ const ReportDetail = () => {
               </>
             ) : (
               <p className="text-sm text-ink-600">
-                No clauses need review. Clauses appear here when they are <strong>partial</strong>, <strong>inferred</strong>, or have <strong>confidence below 70%</strong>. You can then approve or reject to lock the status.
+                No clauses need review. Clauses appear here when they are <strong>partial</strong> or have <strong>confidence below 70%</strong>. You can then approve or reject to lock the status.
               </p>
             )}
           </div>

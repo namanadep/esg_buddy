@@ -139,7 +139,7 @@ class GroundTruthLoader:
             "compliant": ComplianceStatus.SUPPORTED,
             "non-compliant": ComplianceStatus.NOT_SUPPORTED,
             "partial": ComplianceStatus.PARTIAL,
-            "inferred": ComplianceStatus.INFERRED
+            "inferred": ComplianceStatus.PARTIAL,  # legacy label → partial
         }
         
         expected_status = status_map.get(

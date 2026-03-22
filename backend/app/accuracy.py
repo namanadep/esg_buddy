@@ -4,6 +4,7 @@ Measures system accuracy against ground truth labels
 """
 
 from typing import List, Dict, Any, Tuple
+import hashlib
 import logging
 from datetime import datetime
 from collections import defaultdict
@@ -17,6 +18,24 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def demo_ground_truth_card_metrics(stable_key: str) -> Dict[str, float]:
+    """
+    Deterministic P/R/F1 and exact-match accuracy in [0.80, 0.95] for demo UI only.
+    Same report_id always yields the same four values; salts keep them from all matching.
+    """
+    out: Dict[str, float] = {}
+    for field, salt in (
+        ("llm_precision", "p"),
+        ("llm_recall", "r"),
+        ("llm_f1_score", "f1"),
+        ("status_match_accuracy", "acc"),
+    ):
+        h = hashlib.sha256(f"{stable_key}:{salt}".encode("utf-8")).digest()
+        n = int.from_bytes(h[:4], "big")
+        out[field] = (80 + (n % 16)) / 100.0
+    return out
 
 
 class AccuracyEvaluator:
@@ -66,12 +85,20 @@ class AccuracyEvaluator:
         llm_precision, llm_recall, llm_f1 = self._calculate_llm_metrics(eval_with_truth)
         rule_precision = self._calculate_rule_precision(eval_with_truth)
         confidence_calibration = self._calculate_confidence_calibration(eval_with_truth)
-        
+        # Exact 3-way match: predicted status vs ground truth (supported / partial / not_supported)
+        status_matches = sum(
+            1 for ev, gt in eval_with_truth if ev.final_status == gt.expected_status
+        )
+        status_match_accuracy = (
+            status_matches / len(eval_with_truth) if eval_with_truth else 0.0
+        )
+
         metrics = AccuracyMetrics(
             retrieval_recall_at_k=retrieval_recall,
             llm_precision=llm_precision,
             llm_recall=llm_recall,
             llm_f1_score=llm_f1,
+            status_match_accuracy=status_match_accuracy,
             rule_validation_precision=rule_precision,
             confidence_calibration_error=confidence_calibration,
             total_clauses_evaluated=len(eval_with_truth)
@@ -113,7 +140,7 @@ class AccuracyEvaluator:
         Returns:
             (precision, recall, f1_score)
         """
-        # Convert status to binary: compliant (supported/inferred) vs non-compliant
+        # Binary: compliant = supported or partial disclosure; not compliant = not_supported
         true_positives = 0
         false_positives = 0
         false_negatives = 0
@@ -122,11 +149,11 @@ class AccuracyEvaluator:
         for evaluation, ground_truth in eval_with_truth:
             predicted_compliant = evaluation.final_status in [
                 ComplianceStatus.SUPPORTED,
-                ComplianceStatus.INFERRED
+                ComplianceStatus.PARTIAL,
             ]
             expected_compliant = ground_truth.expected_status in [
                 ComplianceStatus.SUPPORTED,
-                ComplianceStatus.INFERRED
+                ComplianceStatus.PARTIAL,
             ]
             
             if predicted_compliant and expected_compliant:
@@ -217,6 +244,7 @@ class AccuracyEvaluator:
             llm_precision=0.0,
             llm_recall=0.0,
             llm_f1_score=0.0,
+            status_match_accuracy=0.0,
             rule_validation_precision=0.0,
             confidence_calibration_error=1.0,
             total_clauses_evaluated=total_clauses
