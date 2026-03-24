@@ -368,7 +368,15 @@ const ReportDetail = () => {
                         {hasGroundTruthAccuracy ? (
                           <>
                             <p className="mb-4">
-                              Verified against 30 clauses for{' '}
+                              Verified against{' '}
+                              {accuracyMetrics.ground_truth_loaded}
+                              {accuracyMetrics.framework === 'GRI' &&
+                              accuracyMetrics.ground_truth_sample_target != null &&
+                              accuracyMetrics.ground_truth_loaded <
+                                accuracyMetrics.ground_truth_sample_target
+                                ? ` of up to ${accuracyMetrics.ground_truth_sample_target}`
+                                : ''}{' '}
+                              clauses for{' '}
                               {report.document_metadata?.filename || report.document_filename}
                             </p>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -424,9 +432,10 @@ const ReportDetail = () => {
                               <>
                                 <p className="mb-2">Ground truth not available for this report.</p>
                                 <p className="text-xs">
-                                  Ground truth is available for:{' '}
-                                  <strong>TCS BRSR.pdf</strong>, <strong>RIL BRSR.pdf</strong>, and{' '}
-                                  <strong>TATA Motors BRSR.pdf</strong>
+                                  Ground truth JSON files exist for selected BRSR reports (e.g. TCS, RIL, TATA Motors)
+                                  and GRI reports (e.g. Givaudan, GPM, Unilever) when{' '}
+                                  <code className="text-xs bg-ink-100 px-1 rounded">Company Reports/GRI Ground Truth/</code>{' '}
+                                  is filled.
                                 </p>
                                 <p className="text-xs mt-1">
                                   Debug: ground_truth_loaded ={' '}

@@ -41,7 +41,12 @@ from app.clause_parser_enhanced import EnhancedClauseParser
 from app.vector_store import VectorStore
 from app.compliance_pipeline import CompliancePipeline
 from app.accuracy import AccuracyEvaluator, demo_ground_truth_card_metrics
+from app.gri_clause_ranking import DEFAULT_GRI_GROUND_TRUTH_SAMPLE
 from app.ground_truth_loader import GroundTruthLoader
+from app.gri_ground_truth_generator import (
+    company_from_filename,
+    run_auto_gri_ground_truth_after_evaluation,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -535,8 +540,30 @@ async def get_clause_detail(clause_id: str):
 
 # ============= Compliance Evaluation =============
 
+def _resolve_upload_dir() -> Path:
+    p = Path(settings.upload_dir)
+    if p.is_absolute():
+        return p
+    backend_root = Path(__file__).resolve().parent.parent
+    return (backend_root / p).resolve()
+
+
+def _gri_clause_resolver(clause_id: str):
+    """Resolve clause metadata from parsed in-memory clauses (for auto ground truth)."""
+    all_clauses = parsed_clauses.get("all", [])
+    c = next((x for x in all_clauses if x.clause_id == clause_id), None)
+    if not c:
+        return None
+    return {
+        "clause_id": c.clause_id,
+        "title": c.title,
+        "description": c.description,
+        "keywords": list(c.keywords or []),
+    }
+
+
 @app.post("/compliance/evaluate")
-async def evaluate_compliance(request: ClauseMatchRequest):
+async def evaluate_compliance(request: ClauseMatchRequest, background_tasks: BackgroundTasks):
     """
     Evaluate a document against ESG clauses
     
@@ -575,6 +602,27 @@ async def evaluate_compliance(request: ClauseMatchRequest):
         # Store report
         compliance_reports[report.report_id] = report
         save_compliance_reports()  # Persist to disk
+
+        if (
+            settings.auto_generate_gri_ground_truth
+            and report.framework == ESGFramework.GRI
+            and settings.openai_api_key
+            and company_from_filename(report.document_metadata.filename or "")
+        ):
+            backend_root = Path(__file__).resolve().parent.parent
+            project_root = backend_root.parent
+            background_tasks.add_task(
+                run_auto_gri_ground_truth_after_evaluation,
+                report,
+                upload_dir=_resolve_upload_dir(),
+                project_root=project_root,
+                openai_api_key=settings.openai_api_key,
+                clause_resolver=_gri_clause_resolver,
+                llm_model=os.getenv("GRI_GT_LLM_MODEL") or settings.llm_model,
+            )
+            logger.info(
+                "Scheduled auto GRI ground truth generation for report %s", report.report_id
+            )
         
         logger.info(f"Compliance evaluation complete: {report.report_id}")
         
@@ -766,37 +814,52 @@ async def add_ground_truth(labels: List[GroundTruthLabel]):
 @app.post("/accuracy/load-ground-truth")
 async def load_ground_truth_from_files():
     """
-    Load all ground truth labels from JSON files in Company Reports/BRSR Ground Truth/
-    
-    This loads TCS, RIL, and TATA Motors ground truth files and links them to existing reports.
+    Load ground truth from JSON files and attach to matching reports.
+
+    - BRSR: Company Reports/BRSR Ground Truth/{Company} Ground Truth.json
+    - GRI: Company Reports/GRI Ground Truth/{Company} GRI Ground Truth.json
+
+    Each report is matched by company name + framework so BRSR and GRI reports for the same
+    company do not share labels.
     """
     try:
-        all_labels = ground_truth_loader.load_all_ground_truth()
-        
         total_loaded = 0
         matched_reports = 0
-        
-        for company, labels in all_labels.items():
-            # Find matching report(s) by filename
-            for report in compliance_reports.values():
-                if company.upper() in report.document_metadata.filename.upper():
-                    # Update document_id for all labels
-                    for label in labels:
-                        label.document_id = report.document_id
-                    
-                    accuracy_evaluator.add_ground_truth(labels)
-                    total_loaded += len(labels)
-                    matched_reports += 1
-                    logger.info(f"Linked {len(labels)} ground truth labels to {report.document_metadata.filename}")
-        
+        details = []
+
+        for report in compliance_reports.values():
+            system_clause_ids = [e.clause_id for e in report.evaluations]
+            labels = ground_truth_loader.load_ground_truth_for_document(
+                document_id=report.document_id,
+                document_filename=report.document_metadata.filename,
+                system_clause_ids=system_clause_ids,
+                framework=report.framework,
+            )
+            if not labels:
+                continue
+            for label in labels:
+                label.document_id = report.document_id
+            accuracy_evaluator.add_ground_truth(labels)
+            total_loaded += len(labels)
+            matched_reports += 1
+            details.append(
+                {
+                    "filename": report.document_metadata.filename,
+                    "framework": report.framework.value,
+                    "labels": len(labels),
+                }
+            )
+            logger.info(
+                f"Linked {len(labels)} ground truth labels to {report.document_metadata.filename}"
+            )
+
         return {
-            "message": f"Loaded ground truth from {len(all_labels)} companies",
-            "companies": list(all_labels.keys()),
+            "message": f"Loaded ground truth for {matched_reports} report(s)",
             "total_labels": total_loaded,
             "matched_reports": matched_reports,
-            "labels_by_company": {k: len(v) for k, v in all_labels.items()}
+            "reports": details,
         }
-        
+
     except Exception as e:
         logger.error(f"Error loading ground truth from files: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -818,7 +881,8 @@ async def get_accuracy_metrics(report_id: str):
         ground_truth_labels = ground_truth_loader.load_ground_truth_for_document(
             document_id=report.document_id,
             document_filename=report.document_metadata.filename,
-            system_clause_ids=system_clause_ids
+            system_clause_ids=system_clause_ids,
+            framework=report.framework,
         )
         
         if ground_truth_labels:
@@ -836,12 +900,17 @@ async def get_accuracy_metrics(report_id: str):
         if settings.inflate_demo_accuracy and ground_truth_labels:
             metrics = metrics.model_copy(update=demo_ground_truth_card_metrics(report_id))
 
-        return {
+        gt_count = len(ground_truth_labels) if ground_truth_labels else 0
+        payload = {
             "report_id": report_id,
             "document_filename": report.document_metadata.filename,
-            "ground_truth_loaded": len(ground_truth_labels) if ground_truth_labels else 0,
+            "framework": report.framework.value,
+            "ground_truth_loaded": gt_count,
             "metrics": metrics.model_dump(),
         }
+        if report.framework.value == "GRI":
+            payload["ground_truth_sample_target"] = DEFAULT_GRI_GROUND_TRUTH_SAMPLE
+        return payload
         
     except Exception as e:
         logger.warning(f"Could not calculate accuracy metrics: {e}")
