@@ -305,7 +305,7 @@ async def startup_event():
                     parsed_clauses[framework.value] = clauses
                     all_clauses.extend(clauses)
                     logger.info(f"Loaded {len(clauses)} {framework.value} clauses from vector store (skipping re-parse)")
-                else:
+                elif settings.parse_from_pdfs_on_startup:
                     clauses = clause_parser.parse_framework(framework)
                     parsed_clauses[framework.value] = clauses
                     all_clauses.extend(clauses)
@@ -313,8 +313,14 @@ async def startup_event():
                         logger.info(f"Indexing {len(clauses)} {framework.value} clauses into vector store...")
                         vector_store.add_clauses(clauses)
                         logger.info(f"Indexed {len(clauses)} clauses into vector store")
+                else:
+                    parsed_clauses[framework.value] = []
+                    logger.warning(
+                        "No %s clauses in vector store and parse_from_pdfs_on_startup is false; skipping PDF parse",
+                        framework.value,
+                    )
         parsed_clauses["all"] = all_clauses
-        logger.info(f"Startup complete. Total clauses for API: {len(all_clauses)} (TCFD re-parsing in background)")
+        logger.info(f"Startup complete. Total clauses for API: {len(all_clauses)}")
     except Exception as e:
         logger.error(f"Error loading/parsing standards on startup: {e}")
 

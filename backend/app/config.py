@@ -25,10 +25,13 @@ class Settings(BaseSettings):
     # Application
     environment: str = "development"
     log_level: str = "INFO"
-    # Comma-separated frameworks to parse on startup (e.g. "BRSR,GRI,TCFD")
+    # Comma-separated frameworks to load on startup (e.g. "BRSR,GRI,TCFD")
     parse_frameworks: str = "BRSR,GRI,TCFD,SASB"  # All frameworks enabled
-    # Frameworks to always re-parse on startup (never load from DB). e.g. "GRI"
-    reparse_frameworks_on_startup: str = ""  # All frameworks load from DB (no reparsing)
+    # Frameworks to always re-parse on startup (never load from DB). e.g. "GRI". Keep empty once indexed.
+    reparse_frameworks_on_startup: str = ""
+    # If True, parse PDFs when Chroma has no clauses for a framework. If False, only load Chroma (no startup parse).
+    # Set True for a fresh install before the vector store is populated.
+    parse_from_pdfs_on_startup: bool = False
     # GRI clause scope: "core" (~35-45) | "standard" (~120) | "essential" (~140-150)
     gri_scope: str = "standard"
     
@@ -44,7 +47,7 @@ class Settings(BaseSettings):
     enable_reflection: bool = False  # Disable reflection for faster evaluation
     parallel_clause_evaluation: int = 10  # Number of clauses to evaluate in parallel
     # When True, API replaces ground-truth card metrics with deterministic 80–95% values (demo only).
-    inflate_demo_accuracy: bool = True
+    inflate_demo_accuracy: bool = False
     # After each GRI compliance report is generated, write/update Company Reports/GRI Ground Truth/{Company} GRI Ground Truth.json (LLM). Set AUTO_GENERATE_GRI_GROUND_TRUTH=false to disable.
     auto_generate_gri_ground_truth: bool = True
 
