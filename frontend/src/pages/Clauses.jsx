@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   CheckSquare, 
@@ -8,15 +8,67 @@ import {
   Shield,
   FileText,
   Tag,
-  Loader2
+  Loader2,
+  SlidersHorizontal,
+  XCircle
 } from 'lucide-react'
 import { getClauses, getClauseDetail } from '../lib/api'
+
+const FW_ORDER = { GRI: 0, BRSR: 1, SASB: 2, TCFD: 3 }
+
+const REQUIREMENT_OPTIONS = [
+  { value: 'all', label: 'All requirements' },
+  { value: 'mandatory', label: 'Mandatory only' },
+  { value: 'voluntary', label: 'Voluntary only' },
+]
+
+const SECTION_OPTIONS = [
+  { value: 'all', label: 'Any section' },
+  { value: 'assigned', label: 'Has section label' },
+  { value: 'none', label: 'No section label' },
+]
+
+const ID_PATTERN_OPTIONS = [
+  { value: 'all', label: 'Any clause ID' },
+  { value: 'core', label: 'ID contains “Core”' },
+]
+
+const SORT_OPTIONS = [
+  { value: 'framework_then_id', label: 'Framework, then clause ID (A–Z)' },
+  { value: 'id_asc', label: 'Clause ID (A–Z)' },
+  { value: 'id_desc', label: 'Clause ID (Z–A)' },
+  { value: 'title_asc', label: 'Title (A–Z)' },
+  { value: 'title_desc', label: 'Title (Z–A)' },
+  { value: 'mandatory_first', label: 'Mandatory first' },
+  { value: 'voluntary_first', label: 'Voluntary first' },
+]
+
+const selectFieldClass =
+  'w-full appearance-none pl-4 pr-11 py-3 bg-white border border-ink-200 rounded-xl text-sm text-ink-900 ' +
+  'shadow-sm hover:border-ink-300 focus:outline-none focus:ring-2 focus:ring-forest-500/30 focus:border-forest-400 ' +
+  'transition-colors cursor-pointer'
+
+function clauseMandatory(c) {
+  return c.mandatory !== false
+}
+
+function compareClauseIds(a, b) {
+  return a.clause_id.localeCompare(b.clause_id, undefined, { sensitivity: 'base' })
+}
+
+function compareTitles(a, b) {
+  return (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
+}
 
 const Clauses = () => {
   const [allClauses, setAllClauses] = useState([])  // Store all clauses
   const [loading, setLoading] = useState(true)
   const [selectedFramework, setSelectedFramework] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [requirementFilter, setRequirementFilter] = useState('all')
+  const [sectionFilter, setSectionFilter] = useState('all')
+  const [idPatternFilter, setIdPatternFilter] = useState('all')
+  const [sortBy, setSortBy] = useState('framework_then_id')
   const [expandedClause, setExpandedClause] = useState(null)
   const [clauseDetail, setClauseDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
@@ -59,39 +111,111 @@ const Clauses = () => {
     }
   }
   
-  // Filter by framework and search query
-  const filteredClauses = React.useMemo(() => {
-    console.log('Filtering - Framework:', selectedFramework, 'Total clauses:', allClauses.length)
-    
-    // First filter by framework (case-insensitive comparison)
-    let result = selectedFramework === 'all' 
-      ? allClauses 
-      : allClauses.filter(c => c.framework?.toUpperCase() === selectedFramework.toUpperCase())
-    
-    console.log('After framework filter:', result.length, 'clauses')
-    
-    // Then filter by search query if present
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      result = result.filter(clause =>
-        clause.title?.toLowerCase().includes(query) ||
-        clause.clause_id?.toLowerCase().includes(query) ||
-        clause.description?.toLowerCase().includes(query)
+  const filteredClauses = useMemo(() => {
+    let result =
+      selectedFramework === 'all'
+        ? allClauses
+        : allClauses.filter(
+            (c) => c.framework?.toUpperCase() === selectedFramework.toUpperCase()
+          )
+
+    const q = searchQuery.trim().toLowerCase()
+    if (q) {
+      result = result.filter(
+        (clause) =>
+          clause.title?.toLowerCase().includes(q) ||
+          clause.clause_id?.toLowerCase().includes(q) ||
+          clause.description?.toLowerCase().includes(q) ||
+          clause.section?.toLowerCase().includes(q) ||
+          (clause.evidence_types || []).some((t) => String(t).toLowerCase().includes(q))
       )
-      console.log('After search filter:', result.length, 'clauses')
     }
-    
-    return result
-  }, [selectedFramework, searchQuery, allClauses])
+
+    if (requirementFilter === 'mandatory') {
+      result = result.filter((c) => clauseMandatory(c))
+    } else if (requirementFilter === 'voluntary') {
+      result = result.filter((c) => !clauseMandatory(c))
+    }
+
+    if (sectionFilter === 'assigned') {
+      result = result.filter((c) => (c.section || '').trim().length > 0)
+    } else if (sectionFilter === 'none') {
+      result = result.filter((c) => !(c.section || '').trim())
+    }
+
+    if (idPatternFilter === 'core') {
+      result = result.filter((c) => (c.clause_id || '').toLowerCase().includes('core'))
+    }
+
+    const sorted = [...result]
+    sorted.sort((a, b) => {
+      switch (sortBy) {
+        case 'id_asc':
+          return compareClauseIds(a, b)
+        case 'id_desc':
+          return compareClauseIds(b, a)
+        case 'title_asc':
+          return compareTitles(a, b)
+        case 'title_desc':
+          return compareTitles(b, a)
+        case 'mandatory_first': {
+          const ma = clauseMandatory(a) ? 0 : 1
+          const mb = clauseMandatory(b) ? 0 : 1
+          if (ma !== mb) return ma - mb
+          return compareClauseIds(a, b)
+        }
+        case 'voluntary_first': {
+          const va = clauseMandatory(a) ? 1 : 0
+          const vb = clauseMandatory(b) ? 1 : 0
+          if (va !== vb) return va - vb
+          return compareClauseIds(a, b)
+        }
+        case 'framework_then_id':
+        default: {
+          const fa = FW_ORDER[a.framework] ?? 99
+          const fb = FW_ORDER[b.framework] ?? 99
+          if (fa !== fb) return fa - fb
+          return compareClauseIds(a, b)
+        }
+      }
+    })
+
+    return sorted
+  }, [
+    allClauses,
+    selectedFramework,
+    searchQuery,
+    requirementFilter,
+    sectionFilter,
+    idPatternFilter,
+    sortBy,
+  ])
+
+  const filtersActive =
+    requirementFilter !== 'all' ||
+    sectionFilter !== 'all' ||
+    idPatternFilter !== 'all' ||
+    sortBy !== 'framework_then_id' ||
+    searchQuery.trim() !== ''
+
+  const clearListFilters = () => {
+    setSearchQuery('')
+    setRequirementFilter('all')
+    setSectionFilter('all')
+    setIdPatternFilter('all')
+    setSortBy('framework_then_id')
+  }
   
-  // Calculate counts from ALL clauses, not filtered ones
-  const frameworkCounts = React.useMemo(() => ({
-    all: allClauses.length,
-    GRI: allClauses.filter(c => c.framework === 'GRI').length,
-    BRSR: allClauses.filter(c => c.framework === 'BRSR').length,
-    SASB: allClauses.filter(c => c.framework === 'SASB').length,
-    TCFD: allClauses.filter(c => c.framework === 'TCFD').length,
-  }), [allClauses])
+  const frameworkCounts = useMemo(
+    () => ({
+      all: allClauses.length,
+      GRI: allClauses.filter((c) => c.framework === 'GRI').length,
+      BRSR: allClauses.filter((c) => c.framework === 'BRSR').length,
+      SASB: allClauses.filter((c) => c.framework === 'SASB').length,
+      TCFD: allClauses.filter((c) => c.framework === 'TCFD').length,
+    }),
+    [allClauses]
+  )
   
   return (
     <div className="min-h-[calc(100vh-80px)] py-12">
@@ -111,41 +235,210 @@ const Clauses = () => {
             </p>
           </div>
           
-          {/* Filters */}
-          <div className="bg-white rounded-2xl shadow-lg border border-ink-200 p-6 mb-8">
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* Search */}
-              <div className="relative">
-                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-ink-400" />
-                <input
-                  type="text"
-                  placeholder="Search clauses..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 bg-clay-50 border border-ink-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-forest-500 focus:border-transparent"
-                />
-              </div>
-              
-              {/* Framework Filter */}
-              <div className="flex items-center space-x-2">
+          {/* Search, framework, advanced filters */}
+          <div className="bg-white rounded-2xl shadow-lg border border-ink-200 p-6 mb-8 space-y-6">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search clauses (title, ID, description, section, evidence types)..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-12 pr-4 py-3 bg-white border border-ink-200 rounded-xl text-sm text-ink-900 shadow-sm hover:border-ink-300 focus:outline-none focus:ring-2 focus:ring-forest-500/30 focus:border-forest-400 transition-colors"
+                aria-label="Search clauses"
+              />
+            </div>
+
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-ink-600 mb-2">
+                Framework
+              </p>
+              <div className="flex flex-wrap gap-2">
                 {['all', 'GRI', 'BRSR', 'SASB', 'TCFD'].map((framework) => (
                   <button
                     key={framework}
+                    type="button"
                     onClick={() => setSelectedFramework(framework)}
-                    className={`px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${
+                    className={`px-4 py-2 rounded-xl font-medium text-sm transition-all duration-200 border ${
                       selectedFramework === framework
-                        ? 'bg-forest-600 text-white shadow-lg'
-                        : 'bg-clay-100 text-ink-700 hover:bg-clay-200'
+                        ? 'bg-forest-600 text-white border-forest-600 shadow-md'
+                        : 'bg-clay-50 text-ink-700 border-ink-200 hover:bg-clay-100 hover:border-ink-300'
                     }`}
                   >
-                    {framework.toUpperCase()}
-                    <span className="ml-2 text-xs opacity-75">
+                    {framework === 'all' ? 'All' : framework}
+                    <span
+                      className={`ml-2 text-xs tabular-nums ${
+                        selectedFramework === framework ? 'text-white/90' : 'text-ink-500'
+                      }`}
+                    >
                       ({frameworkCounts[framework]})
                     </span>
                   </button>
                 ))}
               </div>
             </div>
+
+            <div className="rounded-xl border border-ink-100 bg-clay-50/60 p-4 sm:p-5 space-y-4">
+              <div className="flex items-center gap-2 text-ink-800">
+                <SlidersHorizontal className="w-4 h-4 text-forest-600 shrink-0" aria-hidden />
+                <h2 className="font-display text-lg font-semibold text-ink-900">
+                  Sort &amp; filter
+                </h2>
+              </div>
+              <p className="text-xs text-ink-600 -mt-1">
+                Refine the list below. Framework pills above limit which clauses are loaded into this view.
+              </p>
+
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <label
+                    htmlFor="clause-sort"
+                    className="block text-xs font-medium uppercase tracking-wide text-ink-600 mb-1.5"
+                  >
+                    Sort by
+                  </label>
+                  <div className="relative">
+                    <select
+                      id="clause-sort"
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value)}
+                      className={selectFieldClass}
+                    >
+                      {SORT_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400"
+                      aria-hidden
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="clause-requirement"
+                    className="block text-xs font-medium uppercase tracking-wide text-ink-600 mb-1.5"
+                  >
+                    Requirement
+                  </label>
+                  <div className="relative">
+                    <select
+                      id="clause-requirement"
+                      value={requirementFilter}
+                      onChange={(e) => setRequirementFilter(e.target.value)}
+                      className={selectFieldClass}
+                    >
+                      {REQUIREMENT_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400"
+                      aria-hidden
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="clause-section"
+                    className="block text-xs font-medium uppercase tracking-wide text-ink-600 mb-1.5"
+                  >
+                    Section label
+                  </label>
+                  <div className="relative">
+                    <select
+                      id="clause-section"
+                      value={sectionFilter}
+                      onChange={(e) => setSectionFilter(e.target.value)}
+                      className={selectFieldClass}
+                    >
+                      {SECTION_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400"
+                      aria-hidden
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="clause-id-pattern"
+                    className="block text-xs font-medium uppercase tracking-wide text-ink-600 mb-1.5"
+                  >
+                    Clause ID pattern
+                  </label>
+                  <div className="relative">
+                    <select
+                      id="clause-id-pattern"
+                      value={idPatternFilter}
+                      onChange={(e) => setIdPatternFilter(e.target.value)}
+                      className={selectFieldClass}
+                    >
+                      {ID_PATTERN_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400"
+                      aria-hidden
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {filtersActive && (
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-ink-200">
+                <p className="text-sm text-ink-600">
+                  Showing{' '}
+                  <span className="font-semibold text-ink-900 tabular-nums">{filteredClauses.length}</span>
+                  {selectedFramework !== 'all' ? (
+                    <>
+                      {' '}
+                      matching filters
+                      {frameworkCounts[selectedFramework] != null && (
+                        <>
+                          {' '}
+                          (of{' '}
+                          <span className="font-semibold text-ink-900 tabular-nums">
+                            {frameworkCounts[selectedFramework]}
+                          </span>{' '}
+                          in {selectedFramework})
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    allClauses.length > 0 && (
+                      <>
+                        {' '}
+                        of <span className="font-semibold text-ink-900 tabular-nums">{allClauses.length}</span>
+                      </>
+                    )
+                  )}
+                </p>
+                <button
+                  type="button"
+                  onClick={clearListFilters}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-forest-800 hover:text-forest-950 px-4 py-2 rounded-xl border border-forest-200 bg-white hover:bg-forest-50 shadow-sm transition-colors"
+                >
+                  <XCircle className="w-4 h-4 text-forest-600" aria-hidden />
+                  Reset search &amp; filters
+                </button>
+              </div>
+            )}
           </div>
           
           {/* Clauses List */}
@@ -157,11 +450,23 @@ const Clauses = () => {
             <div className="bg-white rounded-2xl shadow-lg border border-ink-200 p-12 text-center">
               <CheckSquare className="w-16 h-16 text-ink-300 mx-auto mb-4" />
               <h3 className="font-display text-xl font-semibold text-ink-900 mb-2">
-                No clauses found
+                {allClauses.length === 0 ? 'No clauses loaded' : 'No matching clauses'}
               </h3>
-              <p className="text-ink-600">
-                Try adjusting your search or filter criteria
+              <p className="text-ink-600 mb-6">
+                {allClauses.length === 0
+                  ? 'Clauses will appear here after the backend finishes parsing standards.'
+                  : 'Try another framework tab, clearing search, or resetting sort & filters.'}
               </p>
+              {allClauses.length > 0 && filtersActive && (
+                <button
+                  type="button"
+                  onClick={clearListFilters}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-forest-200 bg-forest-50 text-forest-900 font-medium text-sm hover:bg-forest-100 transition-colors"
+                >
+                  <XCircle className="w-4 h-4" aria-hidden />
+                  Reset search &amp; filters
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-4" key={selectedFramework}>
@@ -188,7 +493,7 @@ const Clauses = () => {
                           <span className="px-3 py-1 bg-forest-100 text-forest-700 text-xs font-semibold rounded-full">
                             {clause.framework}
                           </span>
-                          {clause.mandatory && (
+                          {clauseMandatory(clause) && (
                             <span className="px-3 py-1 bg-red-100 text-red-700 text-xs font-semibold rounded-full">
                               MANDATORY
                             </span>
@@ -302,7 +607,7 @@ const Clauses = () => {
                                         <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${
                                           rule.mandatory
                                             ? 'bg-red-100 text-red-700'
-                                            : 'bg-blue-100 text-blue-700'
+                                            : 'bg-forest-50 text-forest-800 border border-forest-200'
                                         }`}>
                                           {rule.mandatory ? 'Mandatory' : 'Optional'}
                                         </span>

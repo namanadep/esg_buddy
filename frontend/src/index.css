@@ -11,6 +11,11 @@
   * {
     @apply border-ink-200;
   }
+
+  /* Native <option> lists: avoid default bright system highlight clashing with app theme */
+  select option {
+    @apply bg-white text-ink-900;
+  }
 }
 
 @layer utilities {
