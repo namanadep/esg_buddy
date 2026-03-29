@@ -1,21 +1,29 @@
 """
-Ground Truth Loader for BRSR and GRI Compliance
+Ground Truth Loader for BRSR, GRI, and TCFD Compliance
 Loads ground truth labels from JSON files and maps them to the accuracy evaluation system.
 
 BRSR: Company Reports/BRSR Ground Truth/{Company} Ground Truth.json
 GRI:   Company Reports/GRI Ground Truth/{Company} GRI Ground Truth.json
+TCFD:  Company Reports/TCFD Ground Truth/{Company} TCFD Ground Truth.json
+SASB:  Company Reports/SASB Ground Truth/{Company} SASB Ground Truth.json
 
 For GRI reports, only the top N most important clauses (by universal/topic priority) are used
-for accuracy — see gri_clause_ranking.select_top_k_gri_clauses (default N=30).
+for accuracy — see gri_clause_ranking (default N=30).
+
+For TCFD reports with mapped companies, labels are aligned to the top N ranked clause IDs
+from the report — see tcfd_clause_ranking (default N=30).
 """
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import List, Dict, Optional
 
 from app.models import GroundTruthLabel, ComplianceStatus, ESGFramework
 from app.gri_clause_ranking import select_top_k_gri_clauses, DEFAULT_GRI_GROUND_TRUTH_SAMPLE
+from app.tcfd_clause_ranking import select_top_k_tcfd_clauses, DEFAULT_TCFD_GROUND_TRUTH_SAMPLE
+from app.sasb_clause_ranking import select_top_k_sasb_clauses, DEFAULT_SASB_GROUND_TRUTH_SAMPLE
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +31,13 @@ logger = logging.getLogger(__name__)
 class GroundTruthLoader:
     """Load and manage ground truth labels from JSON files"""
 
-    def __init__(self, ground_truth_dir: str = None, gri_ground_truth_dir: str = None):
+    def __init__(
+        self,
+        ground_truth_dir: str = None,
+        gri_ground_truth_dir: str = None,
+        tcfd_ground_truth_dir: str = None,
+        sasb_ground_truth_dir: str = None,
+    ):
         project_root = Path(__file__).resolve().parent.parent.parent
         if ground_truth_dir:
             self.ground_truth_dir = Path(ground_truth_dir)
@@ -33,6 +47,14 @@ class GroundTruthLoader:
             self.gri_ground_truth_dir = Path(gri_ground_truth_dir)
         else:
             self.gri_ground_truth_dir = project_root / "Company Reports" / "GRI Ground Truth"
+        if tcfd_ground_truth_dir:
+            self.tcfd_ground_truth_dir = Path(tcfd_ground_truth_dir)
+        else:
+            self.tcfd_ground_truth_dir = project_root / "Company Reports" / "TCFD Ground Truth"
+        if sasb_ground_truth_dir:
+            self.sasb_ground_truth_dir = Path(sasb_ground_truth_dir)
+        else:
+            self.sasb_ground_truth_dir = project_root / "Company Reports" / "SASB Ground Truth"
 
         self.company_mappings = {
             "TCS": "TCS Ground Truth.json",
@@ -49,9 +71,21 @@ class GroundTruthLoader:
             "GPM": "GPM GRI Ground Truth.json",
             "Unilever": "Unilever GRI Ground Truth.json",
         }
+        self.tcfd_company_mappings = {
+            "NYK": "NYK TCFD Ground Truth.json",
+            "Himadri": "Himadri TCFD Ground Truth.json",
+            "Nestle": "Nestle TCFD Ground Truth.json",
+        }
+        self.sasb_company_mappings = {
+            "Amazon": "Amazon SASB Ground Truth.json",
+            "Apple": "Apple SASB Ground Truth.json",
+            "Infosys": "Infosys SASB Ground Truth.json",
+        }
         logger.info(
             f"Ground truth dirs: BRSR={self.ground_truth_dir} (exists: {self.ground_truth_dir.exists()}), "
-            f"GRI={self.gri_ground_truth_dir} (exists: {self.gri_ground_truth_dir.exists()})"
+            f"GRI={self.gri_ground_truth_dir} (exists: {self.gri_ground_truth_dir.exists()}), "
+            f"TCFD={self.tcfd_ground_truth_dir} (exists: {self.tcfd_ground_truth_dir.exists()}), "
+            f"SASB={self.sasb_ground_truth_dir} (exists: {self.sasb_ground_truth_dir.exists()})"
         )
 
     def load_ground_truth_for_document(
@@ -74,17 +108,30 @@ class GroundTruthLoader:
             List of GroundTruthLabel objects (for GRI, at most DEFAULT_GRI_GROUND_TRUTH_SAMPLE
             clauses — the most important among those present in the report).
         """
-        if framework in (ESGFramework.SASB, ESGFramework.TCFD):
-            return []
-
         use_gri = self._should_use_gri_ground_truth(document_filename, framework)
+        use_tcfd = framework == ESGFramework.TCFD
+        use_sasb = framework == ESGFramework.SASB
 
         company_name = self._extract_company_name(document_filename)
         if not company_name:
             logger.warning(f"Could not extract company name from: {document_filename}")
             return []
 
-        if use_gri:
+        if use_tcfd:
+            mapping = self.tcfd_company_mappings
+            base_dir = self.tcfd_ground_truth_dir
+            ground_truth_file = mapping.get(company_name)
+            if not ground_truth_file:
+                logger.warning(f"No TCFD ground truth mapping for company: {company_name}")
+                return []
+        elif use_sasb:
+            mapping = self.sasb_company_mappings
+            base_dir = self.sasb_ground_truth_dir
+            ground_truth_file = mapping.get(company_name)
+            if not ground_truth_file:
+                logger.warning(f"No SASB ground truth mapping for company: {company_name}")
+                return []
+        elif use_gri:
             mapping = self.gri_company_mappings
             base_dir = self.gri_ground_truth_dir
             ground_truth_file = mapping.get(company_name)
@@ -129,9 +176,41 @@ class GroundTruthLoader:
                     f"for {company_name}"
                 )
 
+            if use_tcfd and labels and system_clause_ids:
+                top_ids = set(
+                    select_top_k_tcfd_clauses(
+                        system_clause_ids, DEFAULT_TCFD_GROUND_TRUTH_SAMPLE
+                    )
+                )
+                labels = [l for l in labels if l.clause_id in top_ids]
+                logger.info(
+                    f"TCFD ground truth aligned to top {DEFAULT_TCFD_GROUND_TRUTH_SAMPLE} ranked clauses: "
+                    f"{len(labels)} labels for {company_name}"
+                )
+
+            if use_sasb and labels and system_clause_ids:
+                top_ids = set(
+                    select_top_k_sasb_clauses(
+                        system_clause_ids, DEFAULT_SASB_GROUND_TRUTH_SAMPLE
+                    )
+                )
+                labels = [l for l in labels if l.clause_id in top_ids]
+                logger.info(
+                    f"SASB ground truth aligned to top {DEFAULT_SASB_GROUND_TRUTH_SAMPLE} ranked clauses: "
+                    f"{len(labels)} labels for {company_name}"
+                )
+
+            if use_tcfd:
+                fw_label = "TCFD"
+            elif use_sasb:
+                fw_label = "SASB"
+            elif use_gri:
+                fw_label = "GRI"
+            else:
+                fw_label = "BRSR"
             logger.info(
                 f"Loaded {len(labels)} ground truth labels for {company_name} "
-                f"({'GRI' if use_gri else 'BRSR'}) from {ground_truth_file}"
+                f"({fw_label}) from {ground_truth_file}"
             )
             return labels
 
@@ -153,8 +232,23 @@ class GroundTruthLoader:
         return False
 
     def _extract_company_name(self, filename: str) -> Optional[str]:
-        """Extract company name from filename (must match gri_company_mappings / company_mappings keys)."""
+        """Extract company name from filename (must match gri / BRSR / TCFD mapping keys)."""
         filename_upper = filename.upper()
+
+        if "HIMADRI" in filename_upper:
+            return "Himadri"
+        if "NESTLE" in filename_upper or "NESTLÉ" in (filename or ""):
+            return "Nestle"
+        if filename_upper.startswith("NYK") or " NYK" in filename_upper:
+            return "NYK"
+
+        stem_tokens = set(re.split(r"[\s_.-]+", Path(filename or "").stem.upper()))
+        if "AMAZON" in stem_tokens:
+            return "Amazon"
+        if "APPLE" in stem_tokens:
+            return "Apple"
+        if "INFOSYS" in stem_tokens:
+            return "Infosys"
 
         if "GIVAUDAN" in filename_upper:
             return "Givaudan"
@@ -203,11 +297,20 @@ class GroundTruthLoader:
             ComplianceStatus.NOT_SUPPORTED,
         )
 
+        pages_raw = entry.get("expected_evidence_pages") or []
+        expected_pages: List[int] = []
+        if isinstance(pages_raw, list):
+            for p in pages_raw:
+                try:
+                    expected_pages.append(int(p))
+                except (TypeError, ValueError):
+                    continue
+
         return GroundTruthLabel(
             clause_id=clause_id,
             document_id=document_id,
             expected_status=expected_status,
-            expected_evidence_pages=[],
+            expected_evidence_pages=expected_pages,
             notes=comments,
         )
 

@@ -370,7 +370,7 @@ const ReportDetail = () => {
                             <p className="mb-4">
                               Verified against{' '}
                               {accuracyMetrics.ground_truth_loaded}
-                              {accuracyMetrics.framework === 'GRI' &&
+                              {['GRI', 'TCFD', 'SASB'].includes(accuracyMetrics.framework) &&
                               accuracyMetrics.ground_truth_sample_target != null &&
                               accuracyMetrics.ground_truth_loaded <
                                 accuracyMetrics.ground_truth_sample_target
@@ -432,10 +432,12 @@ const ReportDetail = () => {
                               <>
                                 <p className="mb-2">Ground truth not available for this report.</p>
                                 <p className="text-xs">
-                                  Ground truth JSON files exist for selected BRSR reports (e.g. TCS, RIL, TATA Motors)
-                                  and GRI reports (e.g. Givaudan, GPM, Unilever) when{' '}
-                                  <code className="text-xs bg-ink-100 px-1 rounded">Company Reports/GRI Ground Truth/</code>{' '}
-                                  is filled.
+                                  Ground truth JSON exists for selected BRSR, GRI, TCFD, and SASB reports under{' '}
+                                  <code className="text-xs bg-ink-100 px-1 rounded">Company Reports/</code>
+                                  (e.g. <code className="text-xs bg-ink-100 px-1 rounded">…/SASB Ground Truth/</code> for
+                                  Amazon, Apple, Infosys). Call{' '}
+                                  <code className="text-xs bg-ink-100 px-1 rounded">POST /accuracy/load-ground-truth</code>{' '}
+                                  after adding files.
                                 </p>
                                 <p className="text-xs mt-1">
                                   Debug: ground_truth_loaded ={' '}

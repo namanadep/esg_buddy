@@ -26,6 +26,63 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# TCFD: TCFD-Checker persona; each user turn is ONE requirement row from parsed TCFD PDFs (any count—not limited to 11).
+TCFD_CHECKER_SYSTEM_PROMPT = """You are TCFD-Checker, an expert auditor for Task Force on Climate-related Financial Disclosures (TCFD) compliance. You compare uploaded company reports (excerpts provided in the user message) against **individual requirements** taken from the TCFD standard text as extracted into our clause library—there may be many clauses (sub-disclosures, guidance, annex language), not only eleven rows. Your job each time is to judge **only the single requirement** described in that message.
+
+CORE RULES
+- Base analysis **only** on the evidence excerpts in the user message (from the company PDF). Quote or paraphrase with page/section references from those lines (e.g. p.12 via [Evidence n]).
+- Output **only** the JSON object the user asks for: status must be exactly one of "supported", "partial", "not_supported" (same meaning as Supported / Partial / Unsupported for TCFD auditing).
+- **supported**: The excerpt shows the company disclosure **fully** meets the **specific** requirement stated for this clause—all material elements present and specific enough for TCFD-style reporting (not merely a generic climate mention).
+- **partial**: Mentioned but **incomplete**, boilerplate, ambiguous, or missing key elements of **this** requirement; or only indirect/generic linkage to what the clause asks.
+- **not_supported**: No relevant evidence in the excerpts, or the requirement is clearly absent; do not invent or assume off-document content.
+- **Materiality**: When the clause touches metrics, Scope 3, targets, or ERM integration, note in detailed_reasoning whether the document defines material climate issues (or that it does not).
+- Prefer the **latest** reporting period when excerpts span multiple years. Ignore excerpts clearly unrelated to climate/TCFD context for **this** clause.
+
+HOW TO READ EACH TASK
+- Treat the **clause title and description** as the authoritative requirement for this call (they come from parsed TCFD PDFs—recommended disclosures, sub-bullets, or related standard text).
+- Optionally situate the clause under the four pillars (Governance, Strategy, Risk Management, Metrics & Targets) using the clause section/title when helpful—but **never** collapse the task to “one of eleven boxes” if the written requirement is narrower or broader.
+
+OPTIONAL THEMATIC ANCHOR (11 core recommended disclosures—use as context when a clause clearly aligns; otherwise rely on the clause text alone)
+Governance a/b: board oversight; management’s role.
+Strategy a/b/c: risks/opportunities over time horizons; business/strategy/financial effects; resilience / scenario analysis.
+Risk Management a/b/c: identify/assess; manage/mitigate; integration into enterprise risk management.
+Metrics & Targets a/b/c: metrics/KPIs; Scope 1/2 (and Scope 3 if material) + methodology; targets and performance vs targets.
+
+EDGE CASES
+- No TCFD-relevant content in excerpts for this requirement: not_supported.
+- Ambiguous or generic climate language that does not address the **specific** clause: partial.
+- Do not add markdown or prose outside the JSON object."""
+
+# SASB: disclosure-presence–biased checker; lenient supported vs strict not_supported (retrieval excerpts are narrow).
+SASB_CHECKER_SYSTEM_PROMPT = """You are SASB-Checker, an expert reviewer for Sustainability Accounting Standards Board (SASB)–style disclosures. You compare **short retrieved excerpts** from a company report against **one** SASB-related requirement from our clause library. Large issuers often disclose across many pages; excerpts may be incomplete—**do not treat missing numeric precision alone as failure** if the topic is clearly and substantively addressed.
+
+CORE RULES
+- Base judgment **only** on the evidence excerpts in the user message. Quote or paraphrase with page refs ([Evidence n]).
+- Output JSON only: "supported", "partial", or "not_supported".
+
+LENIENT **supported** (use often when the spirit of the requirement is met)
+- **supported** if the excerpts show a **clear, substantive** response to the topic: narrative, policy, process, table, chart, **or** quantitative data—even if not every ideal field (exact SASB code, full methodology appendix, or every sub-metric) appears.
+- **supported** for **good-faith disclosure**: related KPIs, aggregated metrics, directional trends, qualitative performance discussion, or **cross-references** that reasonably cover what the clause asks.
+- **supported** when the company states **zero / nil / not applicable** with a short reason relevant to the clause.
+- **supported** when excerpts are **on-topic and specific enough** that a reasonable investor would say the company addressed this disclosure area—not perfection.
+
+**partial**
+- Topic appears but is **thin**, **mostly boilerplate**, **tangential**, or **clearly missing** a major element the clause emphasizes (e.g. clause asks for a defined metric and excerpts only mention the theme in one sentence).
+
+**not_supported** (rare)
+- Use **only** when **no** excerpt chunk has a **plausible thematic link** to the clause (wrong topic, pure filler, or empty).
+- **Hard rule:** If any chunk discusses the **same underlying theme** as the clause (e.g. energy, GHG, water, waste, safety, workforce, data security, supply chain, board, ethics—even different SASB industry wording), you **must not** output **not_supported**. Use **partial** at minimum, and **supported** if the discussion is concrete (numbers, named programs, processes, tables, or multi-sentence substance).
+- Large tech and services issuers (e.g. hardware, software, IT services) often report under consolidated ESG narratives; **equivalent** disclosure counts.
+
+BIAS: Unsure **supported** vs **partial** with substantive on-topic text → **supported**. Unsure **partial** vs **not_supported** → **partial**.
+
+**Confidence:** For **supported** or strong **partial**, use **confidence 0.55–0.88** when evidence is substantive; reserve **below 0.4** mainly for thin **partial** or **not_supported**.
+
+INDUSTRY CONTEXT (internal)
+- Infer sector when helpful (retail/tech/financials/O&G/etc.). Clause title/description stays authoritative, but allow **equivalent** disclosures under different wording.
+
+Output **only** the JSON object the user requests."""
+
 
 class CompliancePipeline:
     """Orchestrate the complete compliance evaluation pipeline"""
@@ -296,6 +353,12 @@ class CompliancePipeline:
         elif clause.framework.value == "GRI":
             prompt = self._get_gri_prompt(clause, evidence_text)
             system_message = "You are an ESG Compliance Analyzer for GRI. Prefer Supported when evidence substantively addresses the clause. Use Partial when evidence is indirect, incomplete, or only partially addresses the requirement. Minimize Not Supported."
+        elif clause.framework.value == "TCFD":
+            prompt = self._get_tcfd_prompt(clause, evidence_text)
+            system_message = TCFD_CHECKER_SYSTEM_PROMPT
+        elif clause.framework.value == "SASB":
+            prompt = self._get_sasb_prompt(clause, evidence_text)
+            system_message = SASB_CHECKER_SYSTEM_PROMPT
         else:
             prompt = self._get_default_prompt(clause, evidence_text)
             system_message = "You are an ESG compliance analyst. Be concise and objective."
@@ -352,8 +415,68 @@ class CompliancePipeline:
 
 **Remember:** Use **Partial** for incomplete AND for indirect/implied disclosure. Never use a label other than supported, partial, or not_supported."""
     
+    def _get_tcfd_prompt(self, clause: ESGClause, evidence_text: str) -> str:
+        """TCFD: TCFD-Checker; one extracted standard clause vs company evidence; same JSON schema."""
+        return f"""Evaluate THIS **one** requirement from our TCFD clause library (text extracted from official TCFD PDFs—may be a recommended disclosure, sub-bullet, or other extracted obligation). Do not assume there are only eleven requirements; judge **only** what is written below.
+
+**Clause ID:** {clause.clause_id}
+**Title:** {clause.title}
+**Section / pillar (if any):** {clause.section or "—"}
+**Requirement (authoritative for this call):** {clause.description}
+**Evidence-type hints:** {', '.join([et.value for et in clause.required_evidence_type]) or "descriptive"}
+
+**Evidence excerpts from the company’s uploaded report:**
+{evidence_text}
+
+**Your task (TCFD-Checker):** Using only these excerpts, decide whether the company **fully** meets this specific requirement (supported), meets it **partially** or only generically (partial), or there is **no** adequate evidence (not_supported). Cite pages from the evidence lines. Note gaps. If useful, mention alignment with Governance / Strategy / Risk Management / Metrics & Targets—without replacing the clause text.
+
+**Response (JSON only, exactly these keys):**
+{{
+    "status": "supported | partial | not_supported",
+    "confidence": 0.0-1.0,
+    "explanation": "2-4 sentences; what was found or missing for this requirement",
+    "detailed_reasoning": "Quotes or paraphrase with page refs; materiality / ERM / scenario / metrics notes if relevant"
+}}
+
+Use only: supported, partial, not_supported (lowercase)."""
+
+    def _get_sasb_prompt(self, clause: ESGClause, evidence_text: str) -> str:
+        """SASB: lenient disclosure-presence style vs narrow retrieval excerpts."""
+        return f"""Evaluate THIS **one** SASB-related requirement from our clause library (industry metrics/topics from SASB standards). The evidence below is only **retrieved chunks**—not the whole report—so treat **clear, on-topic disclosure** in those chunks as success when it substantively addresses the requirement.
+
+**Clause ID:** {clause.clause_id}
+**Title:** {clause.title}
+**Section / industry topic (if any):** {clause.section or "—"}
+**Requirement:** {clause.description}
+**Evidence-type hints:** {', '.join([et.value for et in clause.required_evidence_type]) or "descriptive"}
+
+**Evidence excerpts (retrieved from the company report):**
+{evidence_text}
+
+**Labeling (lenient, disclosure-oriented):**
+1. **supported** — Excerpts **substantively cover** this requirement: data, narrative, policy, process, table, or reasonable cross-reference level of detail. **Do not** demand perfect SASB formatting or every optional sub-field. If the company clearly discusses the metric/topic with enough specificity for an investor, use **supported**.
+2. **partial** — Related but **weak**, **very high-level**, **mostly generic**, or **missing** an obvious core part of what the clause asks.
+3. **not_supported** — **Only** if excerpts do **not** meaningfully address this topic (unrelated text or empty of relevant content).
+
+**Rules:**
+- If excerpts are **on-topic** for this clause’s theme → **not_supported is not allowed**; use **partial** (thin) or **supported** (substantive).
+- If torn between supported and partial and the content is substantive → **supported**.
+- If torn between partial and not_supported → **partial**.
+
+**Response (JSON only, exactly these keys):**
+{{
+    "status": "supported | partial | not_supported",
+    "confidence": 0.0-1.0,
+    "explanation": "2-4 sentences",
+    "detailed_reasoning": "Brief quotes or paraphrase with page refs from evidence lines"
+}}
+
+**Confidence:** substantive supported or strong partial → prefer **0.55–0.88**; weak partial → **0.4–0.55**; not_supported or irrelevant excerpts → **0.15–0.35**.
+
+Use only: supported, partial, not_supported (lowercase)."""
+
     def _get_default_prompt(self, clause: ESGClause, evidence_text: str) -> str:
-        """Default prompt for non-BRSR frameworks (TCFD, SASB, etc.)"""
+        """Fallback prompt if a new framework is added without a specific checker."""
         return f"""Evaluate ESG compliance for this clause based on the evidence provided.
 
 **Clause:** {clause.title}
@@ -439,6 +562,22 @@ class CompliancePipeline:
 2. **Partial**: Indirect evidence, proxy metrics, implied compliance, incomplete answer, or key element missing.
 3. **Not Supported**: Blank, no proxy, or explicit denial.
 4. **Cross-refs** = Supported when they point to the required content. Zero/Nil/NA with reason = Supported."""
+        elif clause.framework.value == "TCFD":
+            system_msg = TCFD_CHECKER_SYSTEM_PROMPT
+            task_steps = """
+1. **Read the requirement**: Use clause title + description as the obligation (extracted TCFD text; may be granular—not limited to eleven items).
+2. **Evidence-only**: What do the excerpts say? Cite page numbers from [Evidence n]. Optionally note Governance/Strategy/Risk/Metrics pillar if it helps.
+3. **supported**: This specific requirement is fully and substantively met in the excerpts (not generic boilerplate alone).
+4. **partial**: Mentioned but incomplete, vague, indirect, or missing elements of **this** requirement.
+5. **not_supported**: No relevant excerpt evidence; do not invent. Then set confidence."""
+        elif clause.framework.value == "SASB":
+            system_msg = SASB_CHECKER_SYSTEM_PROMPT
+            task_steps = """
+1. **Clause**: What metric/topic does title + description ask for? (SASB-style, possibly another industry’s standard text.)
+2. **Excerpts**: Retrieved chunks only—may be partial vs full report. What on-topic content appears? Cite [Evidence n].
+3. **Substantive on-topic?** If yes → lean **supported** (data OR solid narrative/policy/process; perfection not required).
+4. **partial**: Thin, boilerplate-only, or missing an obvious core ask.
+5. **not_supported**: Only if **no** chunk is plausibly on-topic. Otherwise minimum **partial**. If unsure supported vs partial → supported when substantive."""
         else:
             system_msg = "You are an expert ESG compliance analyst who thinks step-by-step and provides detailed reasoning."
             task_steps = """
@@ -478,7 +617,17 @@ class CompliancePipeline:
     "detailed_reasoning": "Comprehensive reasoning with evidence references"
 }}
 
-{"**BRSR REMINDER: Use Partial for incomplete OR indirect disclosure; Supported when clear; Not Supported only when absent.**" if clause.framework.value == "BRSR" else "**GRI REMINDER: Use Partial for indirect or incomplete coverage; Supported when the requirement is clearly met.**" if clause.framework.value == "GRI" else "Think carefully and be thorough. Each step should build on the previous one."}"""
+{(
+            "**BRSR REMINDER: Use Partial for incomplete OR indirect disclosure; Supported when clear; Not Supported only when absent.**"
+            if clause.framework.value == "BRSR"
+            else "**GRI REMINDER: Use Partial for indirect or incomplete coverage; Supported when the requirement is clearly met.**"
+            if clause.framework.value == "GRI"
+            else "**TCFD REMINDER: Judge the clause text as written; supported = fully meets that requirement from excerpts; generic = partial; no evidence = not_supported.**"
+            if clause.framework.value == "TCFD"
+            else "**SASB REMINDER: On-topic theme in any chunk → at least partial; not_supported only if wholly irrelevant. Favor supported when substantive.**"
+            if clause.framework.value == "SASB"
+            else "Think carefully and be thorough. Each step should build on the previous one."
+        )}"""
 
         response = self.llm_client.chat.completions.create(
             model=self.llm_model,
@@ -645,6 +794,10 @@ Address the identified issues and provide a more accurate analysis."""
         ])
         if clause.framework.value == "GRI":
             return self._get_gri_prompt(clause, evidence_text)
+        if clause.framework.value == "TCFD":
+            return self._get_tcfd_prompt(clause, evidence_text)
+        if clause.framework.value == "SASB":
+            return self._get_sasb_prompt(clause, evidence_text)
         return f"""
 Evaluate whether the following evidence supports compliance with the ESG clause requirement.
 
@@ -712,7 +865,8 @@ Be objective and precise. Consider the quality, completeness, and relevance of t
                 override_applied = True
                 override_reason = f"Mandatory rule(s) failed: {', '.join([r.rule_id for r in failed_mandatory_rules])}"
                 final_status = ComplianceStatus.PARTIAL
-                final_confidence = min(final_confidence, 0.5)
+                cap = 0.65 if clause.framework.value == "SASB" else 0.5
+                final_confidence = min(final_confidence, cap)
         
         # Check if all rules passed but LLM said not supported
         all_rules_passed = all(r.passed for r in rule_results if r.triggered)
@@ -721,11 +875,13 @@ Be objective and precise. Consider the quality, completeness, and relevance of t
                 # Rules suggest compliance, LLM disagrees - trust LLM but lower confidence
                 final_confidence = max(0.3, final_confidence - 0.2)
         
-        # Confidence calibration based on rule results
+        # Confidence calibration based on rule results (SASB: keep more weight on LLM—rules are heuristic)
         if rule_results:
             rule_pass_rate = sum(1 for r in rule_results if r.passed) / len(rule_results)
-            # Adjust confidence based on rule pass rate
-            final_confidence = (final_confidence + rule_pass_rate) / 2
+            if clause.framework.value == "SASB":
+                final_confidence = min(1.0, 0.82 * final_confidence + 0.18 * rule_pass_rate)
+            else:
+                final_confidence = (final_confidence + rule_pass_rate) / 2
         
         return final_status, final_confidence, override_applied, override_reason
     

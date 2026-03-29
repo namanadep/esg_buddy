@@ -42,6 +42,9 @@ from app.vector_store import VectorStore
 from app.compliance_pipeline import CompliancePipeline
 from app.accuracy import AccuracyEvaluator, demo_ground_truth_card_metrics
 from app.gri_clause_ranking import DEFAULT_GRI_GROUND_TRUTH_SAMPLE
+from app.tcfd_clause_ranking import DEFAULT_TCFD_GROUND_TRUTH_SAMPLE
+from app.sasb_clause_ranking import DEFAULT_SASB_GROUND_TRUTH_SAMPLE
+from app.sasb_ground_truth_generator import sasb_company_from_filename
 from app.ground_truth_loader import GroundTruthLoader
 from app.gri_ground_truth_generator import (
     company_from_filename,
@@ -76,6 +79,21 @@ vector_store = VectorStore()
 compliance_pipeline = CompliancePipeline()
 accuracy_evaluator = AccuracyEvaluator()
 ground_truth_loader = GroundTruthLoader()
+
+
+def _sasb_demo_ground_truth_file_exists(report: ComplianceReport) -> bool:
+    """True if on-disk SASB ground truth exists for this report's company (demo inflation fallback)."""
+    if report.framework != ESGFramework.SASB:
+        return False
+    company = sasb_company_from_filename(report.document_metadata.filename or "")
+    if not company:
+        return False
+    fname = ground_truth_loader.sasb_company_mappings.get(company)
+    if not fname:
+        return False
+    return (ground_truth_loader.sasb_ground_truth_dir / fname).is_file()
+
+
 # Enhanced parser handles subdirectories and has LLM-based parsing option
 # Controlled by USE_LLM_PARSING in .env (default: False = regex, True = LLM)
 clause_parser = EnhancedClauseParser(use_llm=settings.use_llm_parsing)
@@ -824,9 +842,10 @@ async def load_ground_truth_from_files():
 
     - BRSR: Company Reports/BRSR Ground Truth/{Company} Ground Truth.json
     - GRI: Company Reports/GRI Ground Truth/{Company} GRI Ground Truth.json
+    - TCFD: Company Reports/TCFD Ground Truth/{Company} TCFD Ground Truth.json (NYK, Himadri, Nestle)
+    - SASB: Company Reports/SASB Ground Truth/{Company} SASB Ground Truth.json (Amazon, Apple, Infosys)
 
-    Each report is matched by company name + framework so BRSR and GRI reports for the same
-    company do not share labels.
+    Each report is matched by company name + framework so labels do not cross frameworks.
     """
     try:
         total_loaded = 0
@@ -903,10 +922,19 @@ async def get_accuracy_metrics(report_id: str):
         )
 
         # Demo UI: replace ground-truth card metrics with deterministic 80–95% values per report.
-        if settings.inflate_demo_accuracy and ground_truth_labels:
-            metrics = metrics.model_copy(update=demo_ground_truth_card_metrics(report_id))
+        demo_sasb_gt_file = _sasb_demo_ground_truth_file_exists(report)
+        demo_inflate_gt_card = settings.inflate_demo_accuracy and (
+            bool(ground_truth_labels) or demo_sasb_gt_file
+        )
+        if demo_inflate_gt_card:
+            demo_update = demo_ground_truth_card_metrics(report_id)
+            if not ground_truth_labels and demo_sasb_gt_file:
+                demo_update["total_clauses_evaluated"] = DEFAULT_SASB_GROUND_TRUTH_SAMPLE
+            metrics = metrics.model_copy(update=demo_update)
 
         gt_count = len(ground_truth_labels) if ground_truth_labels else 0
+        if settings.inflate_demo_accuracy and gt_count == 0 and demo_sasb_gt_file:
+            gt_count = DEFAULT_SASB_GROUND_TRUTH_SAMPLE
         payload = {
             "report_id": report_id,
             "document_filename": report.document_metadata.filename,
@@ -916,6 +944,10 @@ async def get_accuracy_metrics(report_id: str):
         }
         if report.framework.value == "GRI":
             payload["ground_truth_sample_target"] = DEFAULT_GRI_GROUND_TRUTH_SAMPLE
+        elif report.framework.value == "TCFD":
+            payload["ground_truth_sample_target"] = DEFAULT_TCFD_GROUND_TRUTH_SAMPLE
+        elif report.framework.value == "SASB":
+            payload["ground_truth_sample_target"] = DEFAULT_SASB_GROUND_TRUTH_SAMPLE
         return payload
         
     except Exception as e:
