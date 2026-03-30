@@ -682,6 +682,41 @@ async def list_compliance_reports():
     return {"reports": reports}
 
 
+@app.delete("/compliance/reports")
+async def delete_all_compliance_reports():
+    """
+    Delete all generated compliance reports (clears in-memory store and persisted JSON).
+    Also removes accuracy-evaluator ground-truth entries for documents that only existed via these reports.
+    """
+    global compliance_reports
+    try:
+        doc_ids = {r.document_id for r in compliance_reports.values()}
+        deleted_count = len(compliance_reports)
+        compliance_reports.clear()
+        save_compliance_reports()
+
+        gt = accuracy_evaluator.ground_truth
+        keys_to_remove = [
+            k for k, label in list(gt.items()) if label.document_id in doc_ids
+        ]
+        for k in keys_to_remove:
+            del gt[k]
+
+        logger.info(
+            "Cleared all compliance reports (%s); pruned %s ground-truth keys",
+            deleted_count,
+            len(keys_to_remove),
+        )
+        return {
+            "message": "All compliance reports deleted",
+            "deleted_count": deleted_count,
+            "ground_truth_keys_removed": len(keys_to_remove),
+        }
+    except Exception as e:
+        logger.error(f"Error clearing compliance reports: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/compliance/reports/{report_id}")
 async def get_compliance_report(report_id: str):
     """Get a detailed compliance report"""

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /d/NAMAN/College/Semester 8/esg_buddy/*.md)",
+      "Bash(grep -E \"\\\\.md$|\\\\.pdf$|Dockerfile|docker-compose|CLAUDE\")"
+    ]
+  }
+}
