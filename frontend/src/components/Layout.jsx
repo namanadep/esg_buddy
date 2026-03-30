@@ -7,6 +7,7 @@ import {
   FileText, 
   CheckSquare, 
   BarChart3,
+  LayoutDashboard,
   Activity,
   Menu,
   X
@@ -31,6 +32,7 @@ const Layout = () => {
     { name: 'Documents', href: '/documents', icon: FileText },
     { name: 'Clauses', href: '/clauses', icon: CheckSquare },
     { name: 'Reports', href: '/reports', icon: BarChart3 },
+    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   ]
   
   const isActive = (href) => {

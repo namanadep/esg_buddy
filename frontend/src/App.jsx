@@ -7,6 +7,7 @@ import Documents from './pages/Documents'
 import Clauses from './pages/Clauses'
 import Reports from './pages/Reports'
 import ReportDetail from './pages/ReportDetail'
+import Dashboard from './pages/Dashboard'
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Home />} />
+          <Route path="dashboard" element={<Dashboard />} />
           <Route path="upload" element={<Upload />} />
           <Route path="documents" element={<Documents />} />
           <Route path="clauses" element={<Clauses />} />
