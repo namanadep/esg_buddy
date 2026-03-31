@@ -36,12 +36,33 @@ def _filename_token_set(filename: str) -> set:
 
 def sasb_company_from_filename(filename: str) -> Optional[str]:
     parts = _filename_token_set(filename)
+    u = (filename or "").upper()
     if "AMAZON" in parts:
         return "Amazon"
     if "APPLE" in parts:
         return "Apple"
     if "INFOSYS" in parts:
         return "Infosys"
+    if "SASKEN" in parts or "SASKEN" in u:
+        return "Sasken"
+    if "HIMADRI" in u:
+        return "Himadri"
+    if "NESTLE" in u or "NESTLÉ" in (filename or ""):
+        return "Nestle"
+    if u.startswith("NYK") or " NYK" in u or "NYK " in u:
+        return "NYK"
+    if "GIVAUDAN" in u:
+        return "Givaudan"
+    if "UNILEVER" in u:
+        return "Unilever"
+    if "GPM" in u:
+        return "GPM"
+    if "TCS" in u:
+        return "TCS"
+    if "RIL" in u or "RELIANCE" in u:
+        return "RIL"
+    if "TATA" in u:
+        return "TATA Motors"
     return None
 
 

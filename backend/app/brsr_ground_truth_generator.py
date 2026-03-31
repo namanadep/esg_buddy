@@ -1,7 +1,9 @@
 """
-Generate GRI ground truth JSON (sampled clauses + LLM labels) for a compliance report.
+Generate BRSR ground truth JSON (top-30 clauses, LLM labels) for any compliance report
+evaluated against the BRSR framework.
 
-Used by the CLI (generate_gri_ground_truth.py) and automatically after GRI evaluation when enabled.
+Writes: Company Reports/BRSR Ground Truth/{Company} Ground Truth.json
+Entry shape: clause_id, compliance_status, comments
 """
 
 from __future__ import annotations
@@ -12,24 +14,26 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from app.gri_clause_ranking import (
-    DEFAULT_GRI_GROUND_TRUTH_SAMPLE,
-    _is_gri_style_clause_id,
-    select_top_k_gri_clauses,
-)
 from app.models import ComplianceReport, ESGFramework
+from app.brsr_clause_ranking import (
+    DEFAULT_BRSR_GROUND_TRUTH_SAMPLE,
+    select_top_k_brsr_clauses,
+    sort_brsr_clause_ids,
+)
 
 logger = logging.getLogger(__name__)
 
+BRSR_GT_SYSTEM = (
+    "You are BRSR-Checker, an expert SEBI BRSR auditor. Label one disclosure requirement at a "
+    "time using only the report text provided. Output valid JSON only. "
+    "Compliant = disclosure fully meets the specific requirement; "
+    "Partial = incomplete, high-level, or missing key elements; "
+    "Non-Compliant = not evidenced in the excerpt."
+)
 
-def company_from_filename(filename: str) -> Optional[str]:
+
+def brsr_company_from_filename(filename: str) -> Optional[str]:
     u = (filename or "").upper()
-    if "GIVAUDAN" in u:
-        return "Givaudan"
-    if "UNILEVER" in u:
-        return "Unilever"
-    if "GPM" in u:
-        return "GPM"
     if "SASKEN" in u:
         return "Sasken"
     if "HIMADRI" in u:
@@ -38,6 +42,12 @@ def company_from_filename(filename: str) -> Optional[str]:
         return "Nestle"
     if u.startswith("NYK") or " NYK" in u or "NYK " in u:
         return "NYK"
+    if "GIVAUDAN" in u:
+        return "Givaudan"
+    if "UNILEVER" in u:
+        return "Unilever"
+    if "GPM" in u:
+        return "GPM"
     if "AMAZON" in u:
         return "Amazon"
     if "APPLE" in u:
@@ -54,8 +64,7 @@ def company_from_filename(filename: str) -> Optional[str]:
 
 
 def extract_pdf_text(pdf_path: Path) -> str:
-    import fitz  # PyMuPDF
-
+    import fitz
     doc = fitz.open(pdf_path)
     text = ""
     for page in doc:
@@ -82,7 +91,7 @@ def _clause_from_evaluation(ev: dict) -> dict:
     }
 
 
-def analyze_gri_clause(
+def analyze_brsr_clause(
     client: Any,
     pdf_text: str,
     clause: dict,
@@ -99,7 +108,7 @@ def analyze_gri_clause(
         base = evidence_fallback
 
     keywords = clause.get("keywords") or []
-    excerpt = base[:12000]
+    excerpt = base[:14000]
     if keywords and base:
         lines = base.split("\n")
         hits = []
@@ -109,23 +118,21 @@ def analyze_gri_clause(
                 end = min(len(lines), i + 8)
                 hits.extend(lines[start:end])
         if hits:
-            excerpt = "\n".join(hits)[:12000]
+            excerpt = "\n".join(hits)[:14000]
 
-    prompt = f"""You are an expert GRI sustainability report analyst.
+    prompt = f"""**Company / report:** {company_name}
 
-**Company / report context:** {company_name}
-
-**GRI clause:** {clause_id}
+**BRSR clause:** {clause_id}
 **Title:** {title}
 **Requirement (excerpt):** {desc}
 
 **Report text (excerpt):**
 {excerpt}
 
-Classify whether this GRI disclosure requirement is met in the report. Use ONLY one of:
-- **Compliant** — clear, substantive disclosure addressing the requirement (supported).
-- **Partial** — indirect, incomplete, or only partial coverage.
-- **Non-Compliant** — not addressed or no usable evidence.
+Classify whether this BRSR disclosure requirement is met in the report excerpt. Use ONLY one of:
+- **Compliant** — clear, substantive disclosure addressing the specific requirement.
+- **Partial** — mentioned but incomplete, high-level only, or missing key elements.
+- **Non-Compliant** — not addressed or no usable evidence in the excerpt.
 
 Respond with JSON only:
 {{
@@ -134,15 +141,12 @@ Respond with JSON only:
 }}
 """
 
-    model = model or os.getenv("GRI_GT_LLM_MODEL", "gpt-4o-mini")
+    model = model or os.getenv("BRSR_GT_LLM_MODEL") or "gpt-4o-mini"
     try:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": "You classify GRI report disclosures objectively. Output valid JSON only.",
-                },
+                {"role": "system", "content": BRSR_GT_SYSTEM},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
@@ -171,7 +175,7 @@ def _resolve_clause(
     return None
 
 
-def generate_gri_ground_truth_for_report(
+def generate_brsr_ground_truth_for_report(
     report: ComplianceReport,
     *,
     upload_dir: Path,
@@ -179,114 +183,88 @@ def generate_gri_ground_truth_for_report(
     openai_api_key: str,
     clause_resolver: Optional[Callable[[str], Optional[dict]]] = None,
     llm_model: Optional[str] = None,
+    max_clauses: Optional[int] = None,
 ) -> Optional[Path]:
     """
-    Write ``Company Reports/GRI Ground Truth/{Company} GRI Ground Truth.json`` for this report.
+    Write ``Company Reports/BRSR Ground Truth/{Company} Ground Truth.json``.
 
-    Returns output path, or None if skipped / failed without raising.
+    max_clauses: None → DEFAULT (30); 0 → all clause IDs (ranked).
     """
-    if report.framework != ESGFramework.GRI:
-        logger.debug("Skip GRI ground truth: report is not GRI")
+    if report.framework != ESGFramework.BRSR:
+        logger.debug("Skip BRSR ground truth: report is not BRSR")
         return None
 
     filename = report.document_metadata.filename or ""
-    company = company_from_filename(filename)
+    company = brsr_company_from_filename(filename)
     if not company:
-        logger.info(
-            "Skip auto GRI ground truth: could not infer company from filename: %s", filename
-        )
+        logger.info("Skip BRSR ground truth: could not infer company from: %s", filename)
         return None
 
     report_d = report.model_dump(mode="json")
     evaluations = report_d.get("evaluations") or []
-    raw_ids = list(
-        dict.fromkeys(e["clause_id"] for e in evaluations if e.get("clause_id"))
-    )
+    raw_ids = list(dict.fromkeys(e["clause_id"] for e in evaluations if e.get("clause_id")))
     if not raw_ids:
-        logger.warning("GRI ground truth: no clause ids in report %s", report.report_id)
+        logger.warning("BRSR ground truth: no clause ids in report %s", report.report_id)
         return None
 
-    preferred = [c for c in raw_ids if _is_gri_style_clause_id(c)]
-    pool = preferred if len(preferred) >= DEFAULT_GRI_GROUND_TRUTH_SAMPLE else raw_ids
-    top_ids = select_top_k_gri_clauses(pool, DEFAULT_GRI_GROUND_TRUTH_SAMPLE)
+    k = DEFAULT_BRSR_GROUND_TRUTH_SAMPLE if max_clauses is None else max_clauses
+    if k == 0:
+        raw_ids = sort_brsr_clause_ids(raw_ids)
+        logger.info("BRSR ground truth: using all %s clauses (ranked)", len(raw_ids))
+    else:
+        raw_ids = select_top_k_brsr_clauses(raw_ids, k)
+        logger.info("BRSR ground truth: sampled %s clauses (cap=%s)", len(raw_ids), k)
 
     pdf_path = Path(upload_dir) / filename
     if pdf_path.exists():
-        logger.info("GRI ground truth: extracting PDF text from %s", pdf_path)
+        logger.info("BRSR ground truth: extracting PDF text from %s", pdf_path)
         pdf_text = extract_pdf_text(pdf_path)
     else:
         logger.warning(
-            "GRI ground truth: PDF not at %s; using retrieved evidence per clause only",
+            "BRSR ground truth: PDF not at %s; using retrieved evidence per clause only",
             pdf_path,
         )
         pdf_text = ""
 
     from openai import OpenAI
-
     client = OpenAI(api_key=openai_api_key)
     out_rows: List[dict] = []
-    for clause_id in top_ids:
+    for i, clause_id in enumerate(raw_ids):
         clause = _resolve_clause(clause_id, evaluations, clause_resolver)
         if not clause:
             continue
         ev_row = next((e for e in evaluations if e.get("clause_id") == clause_id), None)
         evidence_fb = _evidence_from_evaluation(ev_row)
-        result = analyze_gri_clause(
+        result = analyze_brsr_clause(
             client,
             pdf_text,
             clause,
             company,
             evidence_fallback=evidence_fb,
-            model=llm_model or os.getenv("GRI_GT_LLM_MODEL"),
+            model=llm_model,
         )
         status = result.get("compliance_status", "Non-Compliant")
         if status not in ("Compliant", "Partial", "Non-Compliant"):
             status = "Non-Compliant"
-        out_rows.append(
-            {
-                "clause_id": clause_id,
-                "title": clause.get("title"),
-                "compliance_status": status,
-                "comments": result.get("comments", ""),
-            }
-        )
+        out_rows.append({
+            "clause_id": clause_id,
+            "compliance_status": status,
+            "comments": result.get("comments", ""),
+        })
+        if (i + 1) % 10 == 0:
+            logger.info("BRSR ground truth: labeled %s / %s clauses", i + 1, len(raw_ids))
 
-    out_dir = project_root / "Company Reports" / "GRI Ground Truth"
+    out_dir = project_root / "Company Reports" / "BRSR Ground Truth"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{company} GRI Ground Truth.json"
+    out_path = out_dir / f"{company} Ground Truth.json"
 
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(out_rows, f, indent=2, ensure_ascii=False)
 
     logger.info(
-        "Wrote %s GRI ground truth labels to %s (report %s)",
+        "Wrote %s BRSR ground truth labels to %s (report %s)",
         len(out_rows),
         out_path,
         report.report_id,
     )
     return out_path
-
-
-def run_auto_gri_ground_truth_after_evaluation(
-    report: ComplianceReport,
-    *,
-    upload_dir: Path,
-    project_root: Path,
-    openai_api_key: str,
-    clause_resolver: Optional[Callable[[str], Optional[dict]]] = None,
-    llm_model: Optional[str] = None,
-) -> None:
-    """Background task entry point: log errors, never raise to client."""
-    try:
-        generate_gri_ground_truth_for_report(
-            report,
-            upload_dir=upload_dir,
-            project_root=project_root,
-            openai_api_key=openai_api_key,
-            clause_resolver=clause_resolver,
-            llm_model=llm_model,
-        )
-    except Exception:
-        logger.exception(
-            "Auto GRI ground truth generation failed for report %s", report.report_id
-        )

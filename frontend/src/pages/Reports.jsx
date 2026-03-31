@@ -36,7 +36,7 @@ const Reports = () => {
     
     loadReports()
   }, [])
-  
+
   const filteredReports = reports.filter(report =>
     report.document_filename.toLowerCase().includes(searchQuery.toLowerCase()) ||
     report.framework.toLowerCase().includes(searchQuery.toLowerCase())
@@ -123,11 +123,11 @@ const Reports = () => {
           </div>
           
           {/* Reports List */}
-          {filteredReports.length === 0 ? (
+          {reports.length === 0 ? (
             <div className="bg-white rounded-2xl shadow-lg border border-ink-200 p-12 text-center">
               <BarChart3 className="w-16 h-16 text-ink-300 mx-auto mb-4" />
               <h3 className="font-display text-xl font-semibold text-ink-900 mb-2">
-                No reports found
+                No reports yet
               </h3>
               <p className="text-ink-600 mb-6">
                 Run a compliance evaluation to generate your first report
@@ -138,6 +138,21 @@ const Reports = () => {
               >
                 Go to Documents
               </Link>
+            </div>
+          ) : filteredReports.length === 0 ? (
+            <div className="bg-white rounded-2xl shadow-lg border border-ink-200 p-12 text-center">
+              <Search className="w-16 h-16 text-ink-300 mx-auto mb-4" />
+              <h3 className="font-display text-xl font-semibold text-ink-900 mb-2">
+                No matching reports
+              </h3>
+              <p className="text-ink-600 mb-6">Try a different search term.</p>
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="text-sm font-semibold text-forest-700 hover:text-forest-900"
+              >
+                Clear search
+              </button>
             </div>
           ) : (
             <div className="grid gap-6">

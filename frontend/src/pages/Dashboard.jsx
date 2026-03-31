@@ -30,7 +30,7 @@ import {
   Pie,
   Cell,
 } from 'recharts'
-import { listComplianceReports } from '../lib/api'
+import { listComplianceReports, getAccuracyMetrics } from '../lib/api'
 
 const FRAMEWORK_ORDER = ['BRSR', 'GRI', 'SASB', 'TCFD']
 
@@ -142,6 +142,7 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selectedCompany, setSelectedCompany] = useState('')
+  const [avgAccuracy, setAvgAccuracy] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -179,6 +180,26 @@ const Dashboard = () => {
     if (!selectedCompany) return null
     return buildCompanySnapshot(deduped, selectedCompany)
   }, [deduped, selectedCompany])
+
+  useEffect(() => {
+    if (!snapshot) return
+    let cancelled = false
+    setAvgAccuracy(null)
+    const reportIds = snapshot.chart.map((c) => c.report_id).filter(Boolean)
+    if (!reportIds.length) return
+    Promise.all(reportIds.map((id) => getAccuracyMetrics(id).catch(() => null))).then((results) => {
+      if (cancelled) return
+      const values = results
+        .filter(Boolean)
+        .map((r) => r?.metrics?.status_match_accuracy)
+        .filter((v) => typeof v === 'number')
+      if (values.length) {
+        const avg = values.reduce((a, b) => a + b, 0) / values.length
+        setAvgAccuracy(Math.round(avg * 1000) / 10)
+      }
+    })
+    return () => { cancelled = true }
+  }, [snapshot])
 
   const pieData = snapshot
     ? [
@@ -311,10 +332,9 @@ const Dashboard = () => {
                       accent: 'text-ink-800',
                     },
                     {
-                      label: 'Avg. confidence',
-                      value:
-                        snapshot.avgConfidence != null ? `${snapshot.avgConfidence}%` : '—',
-                      sub: 'Model confidence (when available)',
+                      label: 'Avg. accuracy',
+                      value: avgAccuracy != null ? `${avgAccuracy}%` : '—',
+                      sub: 'Ground truth accuracy across standards',
                       icon: BarChart3,
                       accent: 'text-ink-700',
                     },

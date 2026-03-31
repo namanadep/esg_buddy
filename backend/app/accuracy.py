@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def demo_ground_truth_card_metrics(stable_key: str) -> Dict[str, float]:
     """
-    Deterministic P/R/F1 and exact-match accuracy in [0.80, 0.95] for demo UI only.
+    Deterministic P/R/F1 and exact-match accuracy in [0.75, 0.90] for demo UI only.
     Same report_id always yields the same four values; salts keep them from all matching.
     """
     out: Dict[str, float] = {}
@@ -34,7 +34,7 @@ def demo_ground_truth_card_metrics(stable_key: str) -> Dict[str, float]:
     ):
         h = hashlib.sha256(f"{stable_key}:{salt}".encode("utf-8")).digest()
         n = int.from_bytes(h[:4], "big")
-        out[field] = (80 + (n % 16)) / 100.0
+        out[field] = (75 + (n % 16)) / 100.0
     return out
 
 

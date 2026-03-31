@@ -38,6 +38,26 @@ def tcfd_company_from_filename(filename: str) -> Optional[str]:
         return "Nestle"
     if u.startswith("NYK") or " NYK" in u or "NYK " in u:
         return "NYK"
+    if "SASKEN" in u:
+        return "Sasken"
+    if "GIVAUDAN" in u:
+        return "Givaudan"
+    if "UNILEVER" in u:
+        return "Unilever"
+    if "GPM" in u:
+        return "GPM"
+    if "AMAZON" in u:
+        return "Amazon"
+    if "APPLE" in u:
+        return "Apple"
+    if "INFOSYS" in u:
+        return "Infosys"
+    if "TCS" in u:
+        return "TCS"
+    if "RIL" in u or "RELIANCE" in u:
+        return "RIL"
+    if "TATA" in u:
+        return "TATA Motors"
     return None
 
 

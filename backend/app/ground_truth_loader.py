@@ -24,6 +24,7 @@ from app.models import GroundTruthLabel, ComplianceStatus, ESGFramework
 from app.gri_clause_ranking import select_top_k_gri_clauses, DEFAULT_GRI_GROUND_TRUTH_SAMPLE
 from app.tcfd_clause_ranking import select_top_k_tcfd_clauses, DEFAULT_TCFD_GROUND_TRUTH_SAMPLE
 from app.sasb_clause_ranking import select_top_k_sasb_clauses, DEFAULT_SASB_GROUND_TRUTH_SAMPLE
+from app.brsr_clause_ranking import select_top_k_brsr_clauses, DEFAULT_BRSR_GROUND_TRUTH_SAMPLE
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,16 @@ class GroundTruthLoader:
             "RIL": "RIL Ground Truth.json",
             "TATA Motors": "TATA Motors Ground Truth.json",
             "Tata Motors": "TATA Motors Ground Truth.json",
+            "Sasken": "Sasken Ground Truth.json",
+            "Himadri": "Himadri Ground Truth.json",
+            "NYK": "NYK Ground Truth.json",
+            "Nestle": "Nestle Ground Truth.json",
+            "Givaudan": "Givaudan Ground Truth.json",
+            "GPM": "GPM Ground Truth.json",
+            "Unilever": "Unilever Ground Truth.json",
+            "Amazon": "Amazon Ground Truth.json",
+            "Apple": "Apple Ground Truth.json",
+            "Infosys": "Infosys Ground Truth.json",
         }
         self.gri_company_mappings = {
             "TCS": "TCS GRI Ground Truth.json",
@@ -70,16 +81,45 @@ class GroundTruthLoader:
             "Givaudan": "Givaudan GRI Ground Truth.json",
             "GPM": "GPM GRI Ground Truth.json",
             "Unilever": "Unilever GRI Ground Truth.json",
+            "Sasken": "Sasken GRI Ground Truth.json",
+            "Himadri": "Himadri GRI Ground Truth.json",
+            "NYK": "NYK GRI Ground Truth.json",
+            "Nestle": "Nestle GRI Ground Truth.json",
+            "Amazon": "Amazon GRI Ground Truth.json",
+            "Apple": "Apple GRI Ground Truth.json",
+            "Infosys": "Infosys GRI Ground Truth.json",
         }
         self.tcfd_company_mappings = {
             "NYK": "NYK TCFD Ground Truth.json",
             "Himadri": "Himadri TCFD Ground Truth.json",
             "Nestle": "Nestle TCFD Ground Truth.json",
+            "RIL": "RIL TCFD Ground Truth.json",
+            "TCS": "TCS TCFD Ground Truth.json",
+            "TATA Motors": "TATA Motors TCFD Ground Truth.json",
+            "Tata Motors": "TATA Motors TCFD Ground Truth.json",
+            "Sasken": "Sasken TCFD Ground Truth.json",
+            "Givaudan": "Givaudan TCFD Ground Truth.json",
+            "GPM": "GPM TCFD Ground Truth.json",
+            "Unilever": "Unilever TCFD Ground Truth.json",
+            "Amazon": "Amazon TCFD Ground Truth.json",
+            "Apple": "Apple TCFD Ground Truth.json",
+            "Infosys": "Infosys TCFD Ground Truth.json",
         }
         self.sasb_company_mappings = {
             "Amazon": "Amazon SASB Ground Truth.json",
             "Apple": "Apple SASB Ground Truth.json",
             "Infosys": "Infosys SASB Ground Truth.json",
+            "RIL": "RIL SASB Ground Truth.json",
+            "TCS": "TCS SASB Ground Truth.json",
+            "TATA Motors": "TATA Motors SASB Ground Truth.json",
+            "Tata Motors": "TATA Motors SASB Ground Truth.json",
+            "Sasken": "Sasken SASB Ground Truth.json",
+            "Himadri": "Himadri SASB Ground Truth.json",
+            "NYK": "NYK SASB Ground Truth.json",
+            "Nestle": "Nestle SASB Ground Truth.json",
+            "Givaudan": "Givaudan SASB Ground Truth.json",
+            "GPM": "GPM SASB Ground Truth.json",
+            "Unilever": "Unilever SASB Ground Truth.json",
         }
         logger.info(
             f"Ground truth dirs: BRSR={self.ground_truth_dir} (exists: {self.ground_truth_dir.exists()}), "
@@ -200,6 +240,19 @@ class GroundTruthLoader:
                     f"{len(labels)} labels for {company_name}"
                 )
 
+            use_brsr = framework == ESGFramework.BRSR
+            if use_brsr and labels and system_clause_ids:
+                top_ids = set(
+                    select_top_k_brsr_clauses(
+                        system_clause_ids, DEFAULT_BRSR_GROUND_TRUTH_SAMPLE
+                    )
+                )
+                labels = [l for l in labels if l.clause_id in top_ids]
+                logger.info(
+                    f"BRSR ground truth aligned to top {DEFAULT_BRSR_GROUND_TRUTH_SAMPLE} ranked clauses: "
+                    f"{len(labels)} labels for {company_name}"
+                )
+
             if use_tcfd:
                 fw_label = "TCFD"
             elif use_sasb:
@@ -249,7 +302,11 @@ class GroundTruthLoader:
             return "Apple"
         if "INFOSYS" in stem_tokens:
             return "Infosys"
+        if "SASKEN" in stem_tokens:
+            return "Sasken"
 
+        if "SASKEN" in filename_upper:
+            return "Sasken"
         if "GIVAUDAN" in filename_upper:
             return "Givaudan"
         if "UNILEVER" in filename_upper:
