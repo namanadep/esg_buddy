@@ -108,6 +108,7 @@ const ReportDetail = () => {
 
   useEffect(() => {
     setGroundTruthExpanded(false)
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [reportId])
 
   // Load accuracy metrics when report loads
@@ -519,7 +520,7 @@ const ReportDetail = () => {
             {ambiguousClauses.length > 0 ? (
               <>
                 <p className="text-sm text-ink-600 mb-4">
-                  {ambiguousClauses.length} clause{ambiguousClauses.length !== 1 ? 's' : ''} need your review (partial disclosure or confidence below 70%). Approve or reject to lock the status.
+                  {ambiguousClauses.length} clause{ambiguousClauses.length !== 1 ? 's' : ''} need your review (partial or uncertain disclosures). Approve or reject to lock the status.
                 </p>
                 <div className="space-y-3 max-h-[480px] overflow-y-auto pr-2">
                   {ambiguousClauses.map((evaluation) => {
@@ -539,8 +540,6 @@ const ReportDetail = () => {
                               <span className="font-mono">{evaluation.clause_id}</span>
                               <span className="mx-2">•</span>
                               <span className="capitalize">{evaluation.final_status.replace('_', ' ')}</span>
-                              <span className="mx-2">•</span>
-                              <span>Confidence: {Math.round((evaluation.final_confidence ?? 0) * 100)}%</span>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">
@@ -696,7 +695,7 @@ const ReportDetail = () => {
               </>
             ) : (
               <p className="text-sm text-ink-600">
-                No clauses need review. Clauses appear here when they are <strong>partial</strong> or have <strong>confidence below 70%</strong>. You can then approve or reject to lock the status.
+                No clauses need review. Clauses appear here when they are <strong>partial</strong> or flagged as <strong>uncertain</strong>. You can then approve or reject to lock the status.
               </p>
             )}
           </div>
@@ -749,8 +748,6 @@ const ReportDetail = () => {
                         <span className="font-mono">{evaluation.clause_id}</span>
                         <span>•</span>
                         <span>Top {evaluation.evidence_count ?? evaluation.retrieved_evidence?.length ?? 0} evidence chunks</span>
-                        <span>•</span>
-                        <span>Confidence: {Math.round(evaluation.final_confidence * 100)}%</span>
                       </div>
                     </div>
                   </div>

@@ -42,7 +42,7 @@ const Home = () => {
     {
       icon: Target,
       title: 'Accuracy Tracking',
-      description: 'Comprehensive metrics measure retrieval accuracy, LLM precision, and confidence calibration'
+      description: 'Comprehensive metrics measure retrieval accuracy, LLM precision, and benchmark alignment'
     }
   ]
   

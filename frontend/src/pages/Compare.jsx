@@ -136,13 +136,11 @@ const Compare = () => {
       return {
         framework: s.framework,
         rate: (sum.compliance_rate || 0) * 100,
-        conf: (sum.average_confidence || 0) * 100,
         supported: sum.supported || 0,
         total: sum.total_clauses || 0,
       }
     })
     const sortedByRate = [...rows].sort((a, b) => b.rate - a.rate)
-    const sortedByConf = [...rows].sort((a, b) => b.conf - a.conf)
     const sortedBySup = [...rows].sort((a, b) => b.supported - a.supported)
     const highest = sortedByRate[0]
     const lowest = sortedByRate[sortedByRate.length - 1]
@@ -152,7 +150,6 @@ const Compare = () => {
       highest,
       lowest,
       range: Math.round(range * 10) / 10,
-      bestConfidence: sortedByConf[0],
       mostSupported: sortedBySup[0],
     }
   }, [available])
@@ -345,7 +342,6 @@ const ComparisonCard = ({ slot, isWinner, isLaggard }) => {
   const s = report.summary || {}
   const total = s.total_clauses || 0
   const rate = (s.compliance_rate || 0) * 100
-  const avgConf = (s.average_confidence || 0) * 100
   const sup = s.supported || 0
   const par = s.partial || 0
   const nsp = s.not_supported || 0
@@ -429,17 +425,9 @@ const ComparisonCard = ({ slot, isWinner, isLaggard }) => {
         </div>
 
         {/* Compact metrics row */}
-        <div className="grid grid-cols-2 gap-2 pt-3 border-t border-ink-100 mb-3">
-          <div>
-            <p className="text-[10px] font-medium uppercase tracking-wide text-ink-500">Clauses</p>
-            <p className="font-display text-sm font-bold text-ink-900 tabular-nums">{total}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-medium uppercase tracking-wide text-ink-500">Conf.</p>
-            <p className="font-display text-sm font-bold text-ink-900 tabular-nums">
-              {avgConf.toFixed(0)}%
-            </p>
-          </div>
+        <div className="pt-3 border-t border-ink-100 mb-3">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-ink-500">Clauses evaluated</p>
+          <p className="font-display text-sm font-bold text-ink-900 tabular-nums">{total}</p>
         </div>
 
         <Link
@@ -484,7 +472,7 @@ const StatusRow = ({ icon, label, value, total, color }) => {
 // ─── Insights strip ────────────────────────────────────────────────
 
 const InsightsStrip = ({ insights, company }) => {
-  const { highest, lowest, range, bestConfidence, mostSupported } = insights
+  const { highest, lowest, range, mostSupported } = insights
 
   return (
     <motion.div
@@ -511,7 +499,7 @@ const InsightsStrip = ({ insights, company }) => {
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <InsightCard
           icon={TrendingUp}
           label="Highest compliance"
@@ -531,13 +519,6 @@ const InsightsStrip = ({ insights, company }) => {
           label="Most clauses supported"
           value={mostSupported.framework}
           hint={`${mostSupported.supported} supported`}
-          accent="text-forest-700"
-        />
-        <InsightCard
-          icon={Award}
-          label="Highest AI confidence"
-          value={bestConfidence.framework}
-          hint={`${bestConfidence.conf.toFixed(0)}% avg`}
           accent="text-forest-700"
         />
       </div>

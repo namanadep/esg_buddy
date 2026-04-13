@@ -85,7 +85,6 @@ function buildCompanySnapshot(rows, company) {
         partial: 0,
         not_supported: 0,
         total: 0,
-        avg_confidence: null,
         report_id: null,
       }
     }
@@ -99,8 +98,6 @@ function buildCompanySnapshot(rows, company) {
       partial: s.partial ?? 0,
       not_supported: s.not_supported ?? 0,
       total,
-      avg_confidence:
-        typeof s.average_confidence === 'number' ? Math.round(s.average_confidence * 1000) / 10 : null,
       report_id: rep.report_id,
     }
   })
@@ -110,13 +107,6 @@ function buildCompanySnapshot(rows, company) {
     covered.length > 0
       ? covered.reduce((a, c) => a + (c.compliance_pct || 0), 0) / covered.length
       : 0
-  const avgConf =
-    covered.filter((c) => c.avg_confidence != null).length > 0
-      ? covered
-          .filter((c) => c.avg_confidence != null)
-          .reduce((a, c) => a + c.avg_confidence, 0) /
-        covered.filter((c) => c.avg_confidence != null).length
-      : null
 
   const statusTotals = covered.reduce(
     (acc, c) => {
@@ -132,7 +122,6 @@ function buildCompanySnapshot(rows, company) {
     chart,
     frameworksWithData: covered.length,
     avgCompliance: Math.round(avgCompliance * 10) / 10,
-    avgConfidence: avgConf != null ? Math.round(avgConf * 10) / 10 : null,
     statusTotals,
     totalClauses: covered.reduce((a, c) => a + c.total, 0),
   }

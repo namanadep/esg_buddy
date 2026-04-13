@@ -438,23 +438,6 @@ const Reports = () => {
                         ))}
                       </div>
                       
-                      {/* Confidence Bar */}
-                      <div className="mt-6 pt-6 border-t border-ink-100">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium text-ink-700">
-                            Average Confidence
-                          </span>
-                          <span className="text-sm font-bold text-ink-900">
-                            {Math.round(report.summary.average_confidence * 100)}%
-                          </span>
-                        </div>
-                        <div className="h-2 bg-clay-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full gradient-forest"
-                            style={{ width: `${report.summary.average_confidence * 100}%` }}
-                          />
-                        </div>
-                      </div>
                     </div>
                   </Link>
                 </motion.div>

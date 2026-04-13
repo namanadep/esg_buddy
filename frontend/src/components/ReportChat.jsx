@@ -44,9 +44,22 @@ const ReportChat = ({ reportId, documentFilename, pdfUrl }) => {
   }, [reportId])
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    const container = scrollRef.current
+    if (!container) return
+    const lastMsg = messages[messages.length - 1]
+    // When a new assistant reply arrives, jump so its FIRST line sits near the top
+    // of the chat viewport. For user messages or the loading indicator, pin to bottom
+    // so the user can see what they just sent.
+    if (!sending && lastMsg && lastMsg.role === 'assistant') {
+      const el = container.querySelector(`[data-msg-id="${lastMsg.id}"]`)
+      if (el) {
+        const elRect = el.getBoundingClientRect()
+        const containerRect = container.getBoundingClientRect()
+        container.scrollTop += elRect.top - containerRect.top - 8
+        return
+      }
     }
+    container.scrollTop = container.scrollHeight
   }, [messages, sending])
 
   useEffect(() => {
@@ -263,7 +276,7 @@ const MessageBubble = ({ message, pdfUrl }) => {
   const isUser = message.role === 'user'
   if (isUser) {
     return (
-      <div className="flex items-start gap-2 justify-end">
+      <div data-msg-id={message.id} className="flex items-start gap-2 justify-end">
         <div className="rounded-2xl rounded-tr-sm bg-forest-600 text-white px-4 py-2.5 text-sm leading-relaxed max-w-[80%] whitespace-pre-wrap">
           {message.content}
         </div>
@@ -275,7 +288,7 @@ const MessageBubble = ({ message, pdfUrl }) => {
   }
 
   return (
-    <div className="flex items-start gap-2">
+    <div data-msg-id={message.id} className="flex items-start gap-2">
       <div className="w-8 h-8 rounded-full bg-forest-100 border border-forest-200 flex items-center justify-center shrink-0">
         <Bot className="w-4 h-4 text-forest-700" />
       </div>
