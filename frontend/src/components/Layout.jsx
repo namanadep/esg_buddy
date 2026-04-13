@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { 
-  Leaf, 
-  Upload, 
-  FileText, 
-  CheckSquare, 
+import {
+  Leaf,
+  Upload,
+  FileText,
+  CheckSquare,
   BarChart3,
   LayoutDashboard,
+  GitCompare,
   Activity,
   Menu,
   X
@@ -32,6 +33,7 @@ const Layout = () => {
     { name: 'Documents', href: '/documents', icon: FileText },
     { name: 'Clauses', href: '/clauses', icon: CheckSquare },
     { name: 'Reports', href: '/reports', icon: BarChart3 },
+    { name: 'Compare', href: '/compare', icon: GitCompare },
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   ]
   

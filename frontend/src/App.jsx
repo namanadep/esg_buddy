@@ -8,6 +8,7 @@ import Clauses from './pages/Clauses'
 import Reports from './pages/Reports'
 import ReportDetail from './pages/ReportDetail'
 import Dashboard from './pages/Dashboard'
+import Compare from './pages/Compare'
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
           <Route path="clauses" element={<Clauses />} />
           <Route path="reports" element={<Reports />} />
           <Route path="reports/:reportId" element={<ReportDetail />} />
+          <Route path="compare" element={<Compare />} />
         </Route>
       </Routes>
     </Router>

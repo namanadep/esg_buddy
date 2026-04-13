@@ -14,10 +14,11 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from typing import List, Optional
 import asyncio
 import gc
+import io
 import logging
 import json
 from pathlib import Path
@@ -46,6 +47,7 @@ from app.tcfd_clause_ranking import DEFAULT_TCFD_GROUND_TRUTH_SAMPLE
 from app.sasb_clause_ranking import DEFAULT_SASB_GROUND_TRUTH_SAMPLE
 from app.sasb_ground_truth_generator import sasb_company_from_filename
 from app.ground_truth_loader import GroundTruthLoader
+from app.pdf_report import generate_compliance_pdf
 from app.gri_ground_truth_generator import (
     company_from_filename,
     run_auto_gri_ground_truth_after_evaluation,
@@ -1124,6 +1126,30 @@ async def get_system_stats():
         "ground_truth_labels": len(accuracy_evaluator.ground_truth),
         "ground_truth_available": ["TCS", "RIL", "TATA Motors"]
     }
+
+
+@app.get("/compliance/reports/{report_id}/pdf")
+async def download_compliance_pdf(report_id: str):
+    """Generate and download a formatted PDF compliance report"""
+    if report_id not in compliance_reports:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    report = compliance_reports[report_id]
+
+    try:
+        pdf_bytes = generate_compliance_pdf(report)
+    except Exception as e:
+        logger.error(f"PDF generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
+
+    safe_name = report.document_metadata.filename.replace(" ", "_").replace(".pdf", "")
+    download_name = f"{safe_name}_{report.framework.value}_Compliance_Report.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
+    )
 
 
 if __name__ == "__main__":

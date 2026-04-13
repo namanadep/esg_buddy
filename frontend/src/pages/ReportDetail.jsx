@@ -19,9 +19,10 @@ import {
   ThumbsUp,
   ThumbsDown,
   Target,
-  BarChart3
+  BarChart3,
+  Download
 } from 'lucide-react'
-import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation, getAccuracyMetrics } from '../lib/api'
+import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation, getAccuracyMetrics, downloadCompliancePdf } from '../lib/api'
 
 const ReportDetail = () => {
   const { reportId } = useParams()
@@ -40,8 +41,29 @@ const ReportDetail = () => {
   const [verificationClauseDetail, setVerificationClauseDetail] = useState(null)
   const [loadingVerificationDetail, setLoadingVerificationDetail] = useState(false)
   const [groundTruthExpanded, setGroundTruthExpanded] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
 
   const CONFIDENCE_THRESHOLD = 0.7
+
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true)
+    try {
+      const blob = await downloadCompliancePdf(reportId)
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const safeName = (report.document_metadata?.filename || report.document_filename || 'report').replace(/\.pdf$/i, '')
+      a.download = `${safeName}_${report.framework}_Compliance_Report.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('PDF download failed:', err)
+    } finally {
+      setDownloadingPdf(false)
+    }
+  }
 
   // Fetch real report data from API
   useEffect(() => {
@@ -276,16 +298,28 @@ const ReportDetail = () => {
                 </p>
               </div>
               
-              <div className="text-right ml-6">
+              <div className="text-right ml-6 flex flex-col items-end">
                 <div className="flex items-center justify-end space-x-2 mb-1">
                   <TrendingUp className="w-6 h-6 text-forest-600" />
                   <span className="text-4xl font-display font-bold text-forest-600">
                     {(report.summary.compliance_rate * 100).toFixed(1)}%
                   </span>
                 </div>
-                <div className="text-sm text-ink-500 font-medium">
+                <div className="text-sm text-ink-500 font-medium mb-3">
                   Overall Compliance
                 </div>
+                <button
+                  onClick={handleDownloadPdf}
+                  disabled={downloadingPdf}
+                  className="inline-flex items-center space-x-2 px-4 py-2 bg-forest-600 text-white text-sm font-semibold rounded-xl hover:bg-forest-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                >
+                  {downloadingPdf ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  <span>{downloadingPdf ? 'Generating...' : 'Download PDF'}</span>
+                </button>
               </div>
             </div>
             
