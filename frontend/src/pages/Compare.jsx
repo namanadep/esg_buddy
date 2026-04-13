@@ -1,6 +1,6 @@
 /* eslint-disable react/prop-types */
 import React, { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   GitCompare,
@@ -77,10 +77,12 @@ function pickLatestPerCompanyFramework(reports) {
 }
 
 const Compare = () => {
+  const [searchParams] = useSearchParams()
+  const preselect = searchParams.get('company') || ''
   const [reports, setReports] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [selectedCompany, setSelectedCompany] = useState('')
+  const [selectedCompany, setSelectedCompany] = useState(preselect)
 
   useEffect(() => {
     let cancelled = false
@@ -108,7 +110,8 @@ const Compare = () => {
   }, [deduped])
 
   useEffect(() => {
-    if (companies.length && !selectedCompany) {
+    if (!companies.length) return
+    if (!selectedCompany || !companies.includes(selectedCompany)) {
       setSelectedCompany(companies[0])
     }
   }, [companies, selectedCompany])
@@ -261,8 +264,8 @@ const Compare = () => {
                 </div>
               ) : (
                 <>
-                  {/* Four-way comparison grid */}
-                  <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                  {/* Four-way comparison grid (2 per row) */}
+                  <div className="grid sm:grid-cols-2 gap-5 mb-8">
                     {slots.map((slot) => (
                       <ComparisonCard
                         key={slot.framework}

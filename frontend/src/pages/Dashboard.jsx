@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ExternalLink,
   BarChart3,
+  GitCompare,
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -253,29 +254,38 @@ const Dashboard = () => {
             </div>
 
             {companies.length > 0 && (
-              <div className="w-full lg:w-80">
-                <label
-                  htmlFor="dashboard-company"
-                  className="block text-xs font-medium uppercase tracking-wide text-ink-600 mb-1.5"
-                >
-                  Organization
-                </label>
-                <div className="relative">
-                  <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400 pointer-events-none" />
-                  <select
-                    id="dashboard-company"
-                    value={selectedCompany}
-                    onChange={(e) => setSelectedCompany(e.target.value)}
-                    className="w-full appearance-none pl-12 pr-11 py-3.5 bg-white border border-ink-200 rounded-xl text-sm font-medium text-ink-900 shadow-sm hover:border-ink-300 focus:outline-none focus:ring-2 focus:ring-forest-500/30 focus:border-forest-400 transition-colors cursor-pointer"
+              <div className="w-full lg:w-auto flex flex-col sm:flex-row sm:items-end gap-3">
+                <div className="w-full sm:w-64">
+                  <label
+                    htmlFor="dashboard-company"
+                    className="block text-xs font-medium uppercase tracking-wide text-ink-600 mb-1.5"
                   >
-                    {companies.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400" />
+                    Organization
+                  </label>
+                  <div className="relative">
+                    <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400 pointer-events-none z-10" />
+                    <select
+                      id="dashboard-company"
+                      value={selectedCompany}
+                      onChange={(e) => setSelectedCompany(e.target.value)}
+                      className="w-full appearance-none pl-12 pr-11 py-3.5 bg-white border border-ink-200 rounded-xl text-sm font-medium text-ink-900 shadow-sm hover:border-ink-300 focus:outline-none focus:ring-2 focus:ring-forest-500/30 focus:border-forest-400 transition-colors cursor-pointer"
+                    >
+                      {companies.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-ink-400" />
+                  </div>
                 </div>
+                <Link
+                  to={selectedCompany ? `/compare?company=${encodeURIComponent(selectedCompany)}` : '/compare'}
+                  className="inline-flex items-center justify-center gap-2 px-5 py-3.5 gradient-forest text-white rounded-xl font-semibold shadow-md hover:shadow-lg transition-all whitespace-nowrap"
+                >
+                  <GitCompare className="w-4 h-4" />
+                  Compare
+                </Link>
               </div>
             )}
           </div>
