@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { 
+import {
   ArrowLeft,
   CheckCircle2,
   AlertTriangle,
@@ -20,9 +20,15 @@ import {
   ThumbsDown,
   Target,
   BarChart3,
-  Download
+  Download,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  Copy,
+  Check
 } from 'lucide-react'
-import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation, getAccuracyMetrics, downloadCompliancePdf } from '../lib/api'
+import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation, getAccuracyMetrics, downloadCompliancePdf, getDocumentFileUrl } from '../lib/api'
+import ReportChat from '../components/ReportChat'
 
 const ReportDetail = () => {
   const { reportId } = useParams()
@@ -42,6 +48,22 @@ const ReportDetail = () => {
   const [loadingVerificationDetail, setLoadingVerificationDetail] = useState(false)
   const [groundTruthExpanded, setGroundTruthExpanded] = useState(false)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [previewEvidenceId, setPreviewEvidenceId] = useState(null)
+  const [copiedEvidenceId, setCopiedEvidenceId] = useState(null)
+
+  const pdfUrl = report?.document_id ? getDocumentFileUrl(report.document_id) : null
+
+  const handleCopyEvidence = async (evidence) => {
+    try {
+      await navigator.clipboard.writeText(evidence.text || '')
+      setCopiedEvidenceId(evidence.chunk_id)
+      setTimeout(() => {
+        setCopiedEvidenceId((id) => (id === evidence.chunk_id ? null : id))
+      }, 1500)
+    } catch (err) {
+      console.error('Failed to copy evidence text:', err)
+    }
+  }
 
   const CONFIDENCE_THRESHOLD = 0.7
 
@@ -613,10 +635,24 @@ const ReportDetail = () => {
                                               key={ev.chunk_id}
                                               className="p-3 bg-white rounded-lg border border-ink-200"
                                             >
-                                              <span className="text-xs text-ink-500">
-                                                Page {ev.page_number}
-                                                {ev.similarity_score != null && ` • ${Math.round(ev.similarity_score * 100)}% match`}
-                                              </span>
+                                              <div className="flex items-center justify-between gap-2">
+                                                <span className="text-xs text-ink-500">
+                                                  Page {ev.page_number}
+                                                  {ev.similarity_score != null && ` • ${Math.round(ev.similarity_score * 100)}% match`}
+                                                </span>
+                                                {pdfUrl && (
+                                                  <a
+                                                    href={`${pdfUrl}#page=${ev.page_number}&zoom=page-width`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-forest-700 hover:text-forest-900"
+                                                    title={`Open page ${ev.page_number} in source PDF`}
+                                                  >
+                                                    <ExternalLink className="w-3 h-3" />
+                                                    Jump to page {ev.page_number}
+                                                  </a>
+                                                )}
+                                              </div>
                                               <p className="text-ink-700 mt-1 line-clamp-3">{ev.text}</p>
                                             </div>
                                           ))}
@@ -822,32 +858,127 @@ const ReportDetail = () => {
                             </div>
                           )}
                           
-                          {/* Evidence */}
+                          {/* Evidence — with source PDF preview */}
                           <div>
                             <h4 className="font-semibold text-ink-900 mb-3 flex items-center">
                               <FileText className="w-4 h-4 mr-2 text-forest-600" />
                               Retrieved Evidence ({clauseDetail.retrieved_evidence.length})
                             </h4>
                             <div className="space-y-3">
-                              {clauseDetail.retrieved_evidence.map((evidence) => (
-                                <div
-                                  key={evidence.chunk_id}
-                                  className="p-4 bg-clay-50 rounded-xl border border-ink-200"
-                                >
-                                  <div className="flex items-center justify-between mb-2">
-                                    <span className="text-xs font-semibold text-ink-600">
-                                      Page {evidence.page_number}
-                                      {evidence.section && ` • ${evidence.section}`}
-                                    </span>
-                                    <span className="text-xs px-2 py-1 bg-forest-100 text-forest-700 rounded-full font-semibold">
-                                      {Math.round(evidence.similarity_score * 100)}% match
-                                    </span>
+                              {clauseDetail.retrieved_evidence.map((evidence) => {
+                                const isPreviewOpen = previewEvidenceId === evidence.chunk_id
+                                const isCopied = copiedEvidenceId === evidence.chunk_id
+                                const pageAnchor = pdfUrl
+                                  ? `${pdfUrl}#page=${evidence.page_number}&zoom=page-width`
+                                  : null
+                                return (
+                                  <div
+                                    key={evidence.chunk_id}
+                                    className="bg-clay-50 rounded-xl border border-ink-200 overflow-hidden"
+                                  >
+                                    <div className="p-4">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <span className="text-xs font-semibold text-ink-600">
+                                          Page {evidence.page_number}
+                                          {evidence.section && ` • ${evidence.section}`}
+                                        </span>
+                                        <span className="text-xs px-2 py-1 bg-forest-100 text-forest-700 rounded-full font-semibold">
+                                          {Math.round(evidence.similarity_score * 100)}% match
+                                        </span>
+                                      </div>
+                                      <p className="text-sm text-ink-700 leading-relaxed">
+                                        {evidence.text}
+                                      </p>
+
+                                      {/* Source PDF actions */}
+                                      <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-ink-200/60">
+                                        {pdfUrl ? (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setPreviewEvidenceId(
+                                                  isPreviewOpen ? null : evidence.chunk_id
+                                                )
+                                              }
+                                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-forest-600 text-white text-xs font-semibold shadow-sm hover:bg-forest-700 transition-colors"
+                                            >
+                                              {isPreviewOpen ? (
+                                                <>
+                                                  <EyeOff className="w-3.5 h-3.5" />
+                                                  Hide source page
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <Eye className="w-3.5 h-3.5" />
+                                                  View page {evidence.page_number} in source PDF
+                                                </>
+                                              )}
+                                            </button>
+                                            <a
+                                              href={pageAnchor}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-ink-200 bg-white text-xs font-semibold text-ink-700 hover:bg-ink-50 transition-colors"
+                                            >
+                                              <ExternalLink className="w-3.5 h-3.5" />
+                                              Open in new tab
+                                            </a>
+                                          </>
+                                        ) : (
+                                          <span className="text-xs text-ink-500">
+                                            Source PDF unavailable
+                                          </span>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleCopyEvidence(evidence)}
+                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-ink-200 bg-white text-xs font-semibold text-ink-700 hover:bg-ink-50 transition-colors"
+                                          title="Copy evidence text so you can Ctrl+F for it in the PDF"
+                                        >
+                                          {isCopied ? (
+                                            <>
+                                              <Check className="w-3.5 h-3.5 text-forest-600" />
+                                              Copied
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Copy className="w-3.5 h-3.5" />
+                                              Copy text
+                                            </>
+                                          )}
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Inline PDF preview anchored to the evidence page */}
+                                    <AnimatePresence initial={false}>
+                                      {isPreviewOpen && pageAnchor && (
+                                        <motion.div
+                                          initial={{ height: 0, opacity: 0 }}
+                                          animate={{ height: 'auto', opacity: 1 }}
+                                          exit={{ height: 0, opacity: 0 }}
+                                          transition={{ duration: 0.25 }}
+                                          className="border-t border-ink-200 bg-white"
+                                        >
+                                          <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 flex items-start gap-2">
+                                            <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                                            <p className="text-xs text-amber-900 leading-snug">
+                                              Showing page <strong>{evidence.page_number}</strong> of the original PDF. Use <kbd className="px-1.5 py-0.5 rounded bg-white border border-amber-200 text-[10px] font-mono">Ctrl+F</kbd> inside the viewer and paste the copied text to highlight the exact passage.
+                                            </p>
+                                          </div>
+                                          <iframe
+                                            key={pageAnchor}
+                                            src={pageAnchor}
+                                            title={`Source PDF page ${evidence.page_number}`}
+                                            className="w-full h-[560px] bg-white"
+                                          />
+                                        </motion.div>
+                                      )}
+                                    </AnimatePresence>
                                   </div>
-                                  <p className="text-sm text-ink-700 leading-relaxed">
-                                    {evidence.text}
-                                  </p>
-                                </div>
-                              ))}
+                                )
+                              })}
                             </div>
                           </div>
                           
@@ -898,6 +1029,13 @@ const ReportDetail = () => {
           </div>
         </motion.div>
       </div>
+
+      {/* Floating RAG chat panel — ask questions about the source PDF */}
+      <ReportChat
+        reportId={reportId}
+        documentFilename={report?.document_metadata?.filename}
+        pdfUrl={pdfUrl}
+      />
     </div>
   )
 }

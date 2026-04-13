@@ -14,7 +14,8 @@ os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from pydantic import BaseModel, Field
 from typing import List, Optional
 import asyncio
 import gc
@@ -461,6 +462,27 @@ async def list_documents():
     }
 
 
+@app.get("/documents/{document_id}/file")
+async def get_document_file(document_id: str):
+    """
+    Serve the original uploaded PDF inline, so the frontend can jump to a
+    specific page (via #page=N URL fragment) for clause-level evidence preview.
+    """
+    if document_id not in documents_metadata:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    metadata = documents_metadata[document_id]
+    file_path = _resolve_upload_dir() / metadata.filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file is no longer on disk")
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{metadata.filename}"'},
+    )
+
+
 @app.delete("/documents/{document_id}")
 async def delete_document(document_id: str):
     """Delete a document and all associated data"""
@@ -847,12 +869,115 @@ async def override_clause_evaluation(request: ComplianceOverrideRequest):
     }
     
     logger.info(f"Override applied to {request.clause_id}: {old_status} -> {request.new_status}")
-    
+
     return {
         "message": "Override applied successfully",
         "clause_id": request.clause_id,
         "old_status": old_status.value,
         "new_status": request.new_status.value
+    }
+
+
+# ============= RAG Chat with Report =============
+
+class ReportChatRequest(BaseModel):
+    """Question from the user to ask against a specific compliance report's source document."""
+    question: str = Field(..., min_length=1, max_length=1000)
+    top_k: int = Field(default=6, ge=1, le=12)
+
+
+REPORT_CHAT_SYSTEM_PROMPT = """You are ESGBuddy, an expert ESG compliance assistant answering questions about a single company's sustainability report.
+
+Rules:
+- Answer ONLY from the retrieved evidence snippets provided. Do not invent facts.
+- If the evidence does not cover the question, say so explicitly ("The report does not appear to cover...").
+- Be concise (2-5 sentences). Use plain language; avoid jargon unless the user uses it first.
+- When you make a factual claim, cite the page number in square brackets like [p. 12]. Cite multiple pages if relevant.
+- Do NOT include a "Sources" list at the end — the UI shows citations separately.
+- If the user asks about ESG standards (BRSR, GRI, SASB, TCFD), you may explain them briefly but ground your answer in the evidence."""
+
+
+@app.post("/compliance/reports/{report_id}/chat")
+async def chat_with_report(report_id: str, request: ReportChatRequest):
+    """
+    RAG chat endpoint: answer a natural-language question about the source
+    document of a specific compliance report, using semantic retrieval +
+    an LLM grounded only on the retrieved chunks.
+    """
+    if report_id not in compliance_reports:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    report = compliance_reports[report_id]
+    document_id = report.document_id
+
+    if document_id not in documents_metadata:
+        raise HTTPException(
+            status_code=404,
+            detail="Source document for this report is no longer available"
+        )
+
+    try:
+        # Retrieve the most relevant chunks from the source document only
+        evidence = vector_store.search_documents(
+            query=request.question,
+            document_id=document_id,
+            top_k=request.top_k
+        )
+    except Exception as e:
+        logger.error(f"Retrieval failed for report {report_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Retrieval failed: {e}")
+
+    if not evidence:
+        return {
+            "answer": "I couldn't find anything relevant in this report for your question. "
+                      "Try rephrasing, or ask about a specific metric (e.g. Scope 3 emissions, board diversity, water usage).",
+            "citations": [],
+            "retrieved_count": 0,
+        }
+
+    # Build context block for the LLM prompt
+    context_lines = []
+    for i, ev in enumerate(evidence, start=1):
+        snippet = (ev.text or "").strip().replace("\n", " ")
+        if len(snippet) > 900:
+            snippet = snippet[:900].rstrip() + "..."
+        context_lines.append(f"[{i}] (p. {ev.page_number}) {snippet}")
+    context_block = "\n\n".join(context_lines)
+
+    user_prompt = (
+        f"Question: {request.question}\n\n"
+        f"Retrieved evidence from the report:\n{context_block}\n\n"
+        f"Answer the question using only the evidence above. "
+        f"Cite pages inline like [p. 12]."
+    )
+
+    try:
+        completion = compliance_pipeline.llm_client.chat.completions.create(
+            model=compliance_pipeline.llm_model,
+            messages=[
+                {"role": "system", "content": REPORT_CHAT_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+        )
+        answer = completion.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"LLM chat failed for report {report_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM call failed: {e}")
+
+    return {
+        "answer": answer,
+        "citations": [
+            {
+                "chunk_id": ev.chunk_id,
+                "page_number": ev.page_number,
+                "section": ev.section,
+                "text": ev.text,
+                "similarity_score": ev.similarity_score,
+            }
+            for ev in evidence
+        ],
+        "retrieved_count": len(evidence),
     }
 
 
