@@ -17,8 +17,11 @@ import {
   Award,
   BarChart3,
   MinusCircle,
+  Layers,
+  Users,
 } from 'lucide-react'
 import { listComplianceReports } from '../lib/api'
+import CompaniesCompare from './CompaniesCompare'
 
 const FRAMEWORK_ORDER = ['BRSR', 'GRI', 'SASB', 'TCFD']
 
@@ -79,6 +82,8 @@ function pickLatestPerCompanyFramework(reports) {
 const Compare = () => {
   const [searchParams] = useSearchParams()
   const preselect = searchParams.get('company') || ''
+  const initialMode = searchParams.get('mode') === 'companies' ? 'companies' : 'frameworks'
+  const [mode, setMode] = useState(initialMode)
   const [reports, setReports] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -171,7 +176,7 @@ const Compare = () => {
           transition={{ duration: 0.45 }}
         >
           {/* Header */}
-          <div className="mb-10">
+          <div className="mb-8">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-forest-50 border border-forest-200 mb-4">
               <GitCompare className="w-4 h-4 text-forest-600" />
               <span className="text-xs font-semibold uppercase tracking-wide text-forest-800">
@@ -179,12 +184,33 @@ const Compare = () => {
               </span>
             </div>
             <h1 className="font-display text-4xl font-bold text-ink-900 mb-3">
-              Compare all four frameworks side-by-side
+              {mode === 'frameworks'
+                ? 'Compare all four frameworks side-by-side'
+                : 'Compare two companies head-to-head'}
             </h1>
             <p className="text-lg text-ink-600 max-w-2xl">
-              See how the same company&rsquo;s ESG report scores under BRSR, GRI, SASB, and TCFD at
-              once. Pick an organization and watch the numbers update in real time.
+              {mode === 'frameworks'
+                ? 'See how the same company’s ESG report scores under BRSR, GRI, SASB, and TCFD at once. Pick an organization and watch the numbers update in real time.'
+                : 'Pit two organizations against each other on a single framework. Section-level radar, clause-by-clause diff, and the agreements and disagreements between their reports.'}
             </p>
+          </div>
+
+          {/* Mode switcher */}
+          <div className="mb-6">
+            <div className="inline-flex p-1 bg-white rounded-2xl border border-ink-200 shadow-sm">
+              <ModeTab
+                active={mode === 'frameworks'}
+                onClick={() => setMode('frameworks')}
+                icon={<Layers className="w-4 h-4" />}
+                label="One company × four frameworks"
+              />
+              <ModeTab
+                active={mode === 'companies'}
+                onClick={() => setMode('companies')}
+                icon={<Users className="w-4 h-4" />}
+                label="Two companies × one framework"
+              />
+            </div>
           </div>
 
           {error && (
@@ -210,6 +236,8 @@ const Compare = () => {
                 <ExternalLink className="w-4 h-4" />
               </Link>
             </div>
+          ) : mode === 'companies' ? (
+            <CompaniesCompare deduped={deduped} companies={companies} />
           ) : (
             <>
               {/* Controls — just the organization selector */}
@@ -537,6 +565,28 @@ const InsightCard = ({ icon: Icon, label, value, hint, accent }) => (
       <p className="text-xs text-ink-500 mt-0.5 truncate">{hint}</p>
     </div>
   </div>
+)
+
+const ModeTab = ({ active, onClick, icon, label }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`relative inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
+      active ? 'text-forest-900' : 'text-ink-500 hover:text-ink-800'
+    }`}
+  >
+    {active && (
+      <motion.span
+        layoutId="compare-mode-active"
+        className="absolute inset-0 bg-forest-50 border border-forest-200 rounded-xl"
+        transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+      />
+    )}
+    <span className="relative flex items-center gap-2">
+      {icon}
+      {label}
+    </span>
+  </button>
 )
 
 export default Compare
