@@ -26,10 +26,16 @@ import {
   ExternalLink,
   Copy,
   Check,
-  Trash2
+  Trash2,
+  Sparkles,
+  Brain,
+  GitBranch,
+  RotateCcw,
+  SearchCheck
 } from 'lucide-react'
 import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation, getAccuracyMetrics, downloadCompliancePdf, getDocumentFileUrl, deleteComplianceReport } from '../lib/api'
 import ReportChat from '../components/ReportChat'
+import ActionPlan from '../components/ActionPlan'
 
 const ReportDetail = () => {
   const { reportId } = useParams()
@@ -52,6 +58,7 @@ const ReportDetail = () => {
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [deletingReport, setDeletingReport] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showActionPlan, setShowActionPlan] = useState(false)
   const [previewEvidenceId, setPreviewEvidenceId] = useState(null)
   const [copiedEvidenceId, setCopiedEvidenceId] = useState(null)
 
@@ -359,6 +366,13 @@ const ReportDetail = () => {
                       <Download className="w-4 h-4" />
                     )}
                     <span>{downloadingPdf ? 'Generating...' : 'Download PDF'}</span>
+                  </button>
+                  <button
+                    onClick={() => setShowActionPlan(true)}
+                    className="inline-flex items-center space-x-2 px-4 py-2 bg-amber-50 text-amber-800 text-sm font-semibold rounded-xl border border-amber-200 hover:bg-amber-100 transition-colors shadow-sm"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>Action Plan</span>
                   </button>
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
@@ -808,77 +822,8 @@ const ReportDetail = () => {
                         </div>
                       ) : clauseDetail ? (
                         <div className="p-6 space-y-6">
-                          {/* LLM Explanation */}
-                          <div>
-                            <h4 className="font-semibold text-ink-900 mb-3 flex items-center">
-                              <Zap className="w-4 h-4 mr-2 text-forest-600" />
-                              AI Analysis
-                              {clauseDetail.llm_evaluation.revised && (
-                                <span className="ml-3 px-2 py-1 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full">
-                                  REVISED
-                                </span>
-                              )}
-                            </h4>
-                            <div className="p-4 bg-forest-50 rounded-xl border border-forest-200">
-                              <p className="text-sm text-ink-700 leading-relaxed mb-3">
-                                <strong>Explanation:</strong> {clauseDetail.llm_evaluation.explanation}
-                              </p>
-                              <p className="text-sm text-ink-600 leading-relaxed">
-                                {clauseDetail.llm_evaluation.reasoning}
-                              </p>
-                            </div>
-                          </div>
-                          
-                          {/* Chain-of-Thought Reasoning */}
-                          {clauseDetail.llm_evaluation.reasoning_steps && clauseDetail.llm_evaluation.reasoning_steps.length > 0 && (
-                            <div>
-                              <h4 className="font-semibold text-ink-900 mb-3 flex items-center">
-                                <Zap className="w-4 h-4 mr-2 text-forest-600" />
-                                Chain-of-Thought Reasoning
-                              </h4>
-                              <div className="space-y-2">
-                                {clauseDetail.llm_evaluation.reasoning_steps.map((step, idx) => (
-                                  <div
-                                    key={idx}
-                                    className="p-3 bg-blue-50 rounded-lg border border-blue-200"
-                                  >
-                                    <p className="text-sm text-ink-700 leading-relaxed">
-                                      {step}
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Self-Reflection */}
-                          {clauseDetail.llm_evaluation.reflection && (
-                            <div>
-                              <h4 className="font-semibold text-ink-900 mb-3 flex items-center">
-                                <Zap className="w-4 h-4 mr-2 text-forest-600" />
-                                Self-Reflection
-                              </h4>
-                              <div className="p-4 bg-purple-50 rounded-xl border border-purple-200 space-y-3">
-                                <p className="text-sm text-ink-700 leading-relaxed">
-                                  <strong>Critical Review:</strong> {clauseDetail.llm_evaluation.reflection}
-                                </p>
-                                
-                                {clauseDetail.llm_evaluation.reflection_issues && clauseDetail.llm_evaluation.reflection_issues.length > 0 && (
-                                  <div>
-                                    <p className="text-xs font-semibold text-purple-700 mb-2">Issues Identified:</p>
-                                    <ul className="space-y-1">
-                                      {clauseDetail.llm_evaluation.reflection_issues.map((issue, idx) => (
-                                        <li key={idx} className="text-sm text-ink-600 flex items-start">
-                                          <span className="mr-2">•</span>
-                                          <span>{issue}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
+                          {/* Agentic Reasoning Timeline — "How did the AI decide?" */}
+                          <AgenticTimeline llm={clauseDetail.llm_evaluation} />
                           
                           {/* Evidence — with source PDF preview */}
                           <div>
@@ -1052,6 +997,19 @@ const ReportDetail = () => {
         </motion.div>
       </div>
 
+      {/* Action Plan modal */}
+      {showActionPlan && (
+        <ActionPlan
+          reportId={reportId}
+          onClose={() => setShowActionPlan(false)}
+          reportMeta={{
+            framework: report.framework,
+            compliance_rate: report.summary.compliance_rate,
+            document_filename: report.document_metadata?.filename || report.document_filename,
+          }}
+        />
+      )}
+
       {/* Delete confirmation modal */}
       <AnimatePresence>
         {showDeleteConfirm && (
@@ -1112,6 +1070,185 @@ const ReportDetail = () => {
         documentFilename={report?.document_metadata?.filename}
         pdfUrl={pdfUrl}
       />
+    </div>
+  )
+}
+
+// ─── Agentic Reasoning Timeline ─────────────────────────────────────────
+
+const TIMELINE_NODE_STYLES = {
+  analysis:   { bg: 'bg-forest-600', ring: 'ring-forest-200' },
+  step:       { bg: 'bg-blue-500',   ring: 'ring-blue-200' },
+  reflection: { bg: 'bg-purple-500', ring: 'ring-purple-200' },
+  issue:      { bg: 'bg-amber-500',  ring: 'ring-amber-200' },
+  revised:    { bg: 'bg-emerald-500',ring: 'ring-emerald-200' },
+}
+
+const TimelineNode = ({ type, icon: Icon, label, children, isLast }) => {
+  const s = TIMELINE_NODE_STYLES[type] || TIMELINE_NODE_STYLES.analysis
+  return (
+    <div className="relative flex gap-4">
+      {/* Vertical line + dot */}
+      <div className="flex flex-col items-center shrink-0">
+        <div className={`w-8 h-8 rounded-full ${s.bg} ring-4 ${s.ring} flex items-center justify-center z-10`}>
+          <Icon className="w-4 h-4 text-white" />
+        </div>
+        {!isLast && <div className="w-0.5 flex-1 bg-ink-200 mt-1" />}
+      </div>
+      {/* Content */}
+      <div className={`flex-1 min-w-0 ${isLast ? 'pb-0' : 'pb-6'}`}>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-500 mb-1.5">{label}</p>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+const AgenticTimeline = ({ llm }) => {
+  const [open, setOpen] = useState(false)
+  if (!llm) return null
+
+  const hasSteps = llm.reasoning_steps?.length > 0
+  const hasReflection = !!llm.reflection
+  const hasIssues = llm.reflection_issues?.length > 0
+  const hasAgentic = hasSteps || hasReflection
+
+  return (
+    <div className="rounded-xl border border-ink-200 overflow-hidden">
+      {/* Toggle header */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-3 px-4 py-3.5 bg-clay-50/60 hover:bg-clay-100/60 transition-colors text-left"
+      >
+        {open ? <ChevronDown className="w-4 h-4 text-ink-500 shrink-0" /> : <ChevronRight className="w-4 h-4 text-ink-500 shrink-0" />}
+        <Brain className="w-5 h-5 text-forest-600 shrink-0" />
+        <span className="font-semibold text-sm text-ink-900 flex-1">How did the AI decide?</span>
+        <div className="flex items-center gap-2 shrink-0">
+          {llm.revised && (
+            <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full">
+              REVISED
+            </span>
+          )}
+          {hasAgentic && (
+            <span className="px-2 py-0.5 bg-forest-100 text-forest-700 text-[10px] font-bold rounded-full">
+              AGENTIC
+            </span>
+          )}
+        </div>
+      </button>
+
+      {/* Timeline body */}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="overflow-hidden"
+          >
+            <div className="px-5 py-5 border-t border-ink-200">
+              {/* Node 1: AI Analysis (always present) */}
+              <TimelineNode
+                type="analysis"
+                icon={SearchCheck}
+                label="Initial Analysis"
+                isLast={!hasSteps && !hasReflection && !llm.revised}
+              >
+                <div className="p-3.5 bg-forest-50 rounded-lg border border-forest-200">
+                  <p className="text-sm text-ink-700 leading-relaxed mb-2">
+                    {llm.explanation}
+                  </p>
+                  {llm.reasoning && (
+                    <p className="text-sm text-ink-600 leading-relaxed">
+                      {llm.reasoning}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-3 mt-3 pt-3 border-t border-forest-200/60">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-500">Confidence</span>
+                    <div className="flex-1 h-1.5 bg-forest-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-forest-500 transition-all"
+                        style={{ width: `${Math.round((llm.confidence ?? 0) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs font-bold text-forest-700 tabular-nums">
+                      {Math.round((llm.confidence ?? 0) * 100)}%
+                    </span>
+                  </div>
+                </div>
+              </TimelineNode>
+
+              {/* Nodes 2..N: Chain-of-thought steps */}
+              {hasSteps && llm.reasoning_steps.map((step, idx) => (
+                <TimelineNode
+                  key={`step-${idx}`}
+                  type="step"
+                  icon={GitBranch}
+                  label={`Reasoning Step ${idx + 1}`}
+                  isLast={!hasReflection && !llm.revised && idx === llm.reasoning_steps.length - 1}
+                >
+                  <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                    <p className="text-sm text-ink-700 leading-relaxed">{step}</p>
+                  </div>
+                </TimelineNode>
+              ))}
+
+              {/* Reflection node */}
+              {hasReflection && (
+                <TimelineNode
+                  type="reflection"
+                  icon={Brain}
+                  label="Self-Reflection"
+                  isLast={!hasIssues && !llm.revised}
+                >
+                  <div className="p-3.5 bg-purple-50 rounded-lg border border-purple-200">
+                    <p className="text-sm text-ink-700 leading-relaxed">{llm.reflection}</p>
+                  </div>
+                </TimelineNode>
+              )}
+
+              {/* Issues node */}
+              {hasIssues && (
+                <TimelineNode
+                  type="issue"
+                  icon={AlertTriangle}
+                  label={`${llm.reflection_issues.length} Issue${llm.reflection_issues.length !== 1 ? 's' : ''} Flagged`}
+                  isLast={!llm.revised}
+                >
+                  <div className="space-y-1.5">
+                    {llm.reflection_issues.map((issue, idx) => (
+                      <div key={idx} className="flex items-start gap-2 p-2.5 bg-amber-50 rounded-lg border border-amber-200">
+                        <span className="w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">
+                          {idx + 1}
+                        </span>
+                        <p className="text-sm text-ink-700 leading-relaxed">{issue}</p>
+                      </div>
+                    ))}
+                  </div>
+                </TimelineNode>
+              )}
+
+              {/* Revised verdict node */}
+              {llm.revised && (
+                <TimelineNode
+                  type="revised"
+                  icon={RotateCcw}
+                  label="Revised Verdict"
+                  isLast
+                >
+                  <div className="p-3.5 bg-emerald-50 rounded-lg border border-emerald-200">
+                    <p className="text-sm text-emerald-800 leading-relaxed font-medium">
+                      After self-reflection, the AI revised its assessment. The final status above reflects the corrected evaluation.
+                    </p>
+                  </div>
+                </TimelineNode>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

@@ -49,6 +49,7 @@ from app.sasb_clause_ranking import DEFAULT_SASB_GROUND_TRUTH_SAMPLE
 from app.sasb_ground_truth_generator import sasb_company_from_filename
 from app.ground_truth_loader import GroundTruthLoader
 from app.pdf_report import generate_compliance_pdf
+from app.pdf_action_plan import generate_action_plan_pdf
 from app.gri_ground_truth_generator import (
     company_from_filename,
     run_auto_gri_ground_truth_after_evaluation,
@@ -105,11 +106,14 @@ clause_parser = EnhancedClauseParser(use_llm=settings.use_llm_parsing)
 documents_metadata = {}
 compliance_reports = {}
 parsed_clauses = {}
+action_plans = {}  # report_id -> dict (cached action plans)
 
 # Documents metadata persistence file
 DOCUMENTS_METADATA_FILE = Path("./data/documents_metadata.json")
 # Compliance reports persistence file
 COMPLIANCE_REPORTS_FILE = Path("./data/compliance_reports.json")
+# Action plans persistence file
+ACTION_PLANS_FILE = Path("./data/action_plans.json")
 
 
 def save_documents_metadata():
@@ -211,6 +215,31 @@ def load_compliance_reports():
         logger.error(traceback.format_exc())
 
 
+def save_action_plans():
+    """Save action plans to JSON file."""
+    try:
+        ACTION_PLANS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(ACTION_PLANS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(action_plans, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved {len(action_plans)} action plans")
+    except Exception as e:
+        logger.error(f"Error saving action plans: {e}")
+
+
+def load_action_plans():
+    """Load action plans from JSON file."""
+    global action_plans
+    try:
+        if ACTION_PLANS_FILE.exists():
+            with open(ACTION_PLANS_FILE, 'r', encoding='utf-8') as f:
+                action_plans = json.load(f)
+            logger.info(f"Loaded {len(action_plans)} action plans")
+        else:
+            logger.info("No action plans file found, starting fresh")
+    except Exception as e:
+        logger.error(f"Error loading action plans: {e}")
+
+
 def _clauses_from_vector_store(rows: List[dict]) -> List[ESGClause]:
     """Convert vector-store clause dicts (from get_all_clauses) to ESGClause objects."""
     clauses = []
@@ -291,7 +320,8 @@ async def startup_event():
     # Load documents metadata and compliance reports from persistent storage
     load_documents_metadata()
     load_compliance_reports()
-    
+    load_action_plans()
+
     stats = vector_store.get_collection_stats()
     logger.info(f"Vector store stats: {stats}")
     enabled = [f.strip().upper() for f in settings.parse_frameworks.split(",") if f.strip()]
@@ -856,6 +886,9 @@ async def delete_all_compliance_reports():
         compliance_reports.clear()
         save_compliance_reports()
 
+        action_plans.clear()
+        save_action_plans()
+
         gt = accuracy_evaluator.ground_truth
         keys_to_remove = [
             k for k, label in list(gt.items()) if label.document_id in doc_ids
@@ -889,6 +922,11 @@ async def delete_single_compliance_report(report_id: str):
         doc_id = report.document_id
         del compliance_reports[report_id]
         save_compliance_reports()
+
+        # Remove cached action plan
+        if report_id in action_plans:
+            del action_plans[report_id]
+            save_action_plans()
 
         # Prune ground-truth keys tied to this report's document (only if no other
         # reports reference that document)
@@ -1155,6 +1193,168 @@ async def chat_with_report(report_id: str, request: ReportChatRequest):
         "retrieved_count": len(evidence),
     }
 
+
+
+# ============= Gap Analysis / Action Plan =============
+
+ACTION_PLAN_SYSTEM_PROMPT = """You are ESGBuddy, a senior ESG compliance consultant. You are given a company's compliance evaluation results showing which ESG clauses are NOT supported or only PARTIALLY supported.
+
+Your task: produce a concise, prioritized Executive Action Plan that a sustainability officer can act on immediately.
+
+Rules:
+- Group recommendations into three ESG pillars: Environment, Social, Governance.
+- Within each pillar, list concrete action items sorted by impact (highest first).
+- For each action item provide:
+  - "action": a short imperative title (e.g. "Disclose Scope 3 emissions across value chain")
+  - "detail": 2-3 sentences of specific guidance including suggested wording or data points to include
+  - "effort": one of "quick_win", "moderate", or "structural"
+  - "clauses": list of clause IDs this action addresses
+  - "impact": one sentence on the compliance lift this delivers
+- After the pillar groups, provide a "top_5" list: the 5 highest-impact actions across all pillars that would yield the biggest jump in compliance rate, in priority order.
+- Keep the total response concise and actionable. No filler.
+
+Respond with ONLY valid JSON matching this structure (no markdown, no code fences):
+{
+  "pillars": {
+    "Environment": [ { "action": "...", "detail": "...", "effort": "...", "clauses": ["..."], "impact": "..." } ],
+    "Social": [ ... ],
+    "Governance": [ ... ]
+  },
+  "top_5": [
+    { "rank": 1, "action": "...", "detail": "...", "effort": "...", "clauses": ["..."], "impact": "...", "pillar": "..." }
+  ],
+  "summary": "A 2-sentence executive summary of the compliance gap situation and recommended path forward."
+}"""
+
+
+@app.get("/compliance/reports/{report_id}/action-plan")
+async def get_cached_action_plan(report_id: str):
+    """Return a previously generated action plan, or 404 if none exists."""
+    if report_id not in compliance_reports:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report_id not in action_plans:
+        raise HTTPException(status_code=404, detail="No action plan generated yet")
+    return action_plans[report_id]
+
+
+@app.post("/compliance/reports/{report_id}/action-plan")
+async def generate_action_plan(report_id: str):
+    """
+    Generate a Gap Analysis / Executive Action Plan for a compliance report.
+    Uses LLM to analyze not_supported and partial clauses and produce a prioritized roadmap.
+    Result is cached so subsequent opens are instant.
+    """
+    if report_id not in compliance_reports:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    report = compliance_reports[report_id]
+
+    # Gather gap clauses (not_supported + partial)
+    gaps = []
+    for ev in report.evaluations:
+        if ev.final_status in ("not_supported", "partial"):
+            gaps.append({
+                "clause_id": ev.clause_id,
+                "title": ev.clause.title,
+                "section": ev.clause.section or "",
+                "description": ev.clause.description[:300],
+                "status": ev.final_status,
+                "explanation": (ev.llm_evaluation.explanation[:200] if ev.llm_evaluation else ""),
+            })
+
+    if not gaps:
+        return {
+            "summary": "This report has full compliance — no gaps found. Congratulations!",
+            "pillars": {"Environment": [], "Social": [], "Governance": []},
+            "top_5": [],
+            "report_meta": {
+                "framework": report.framework.value,
+                "compliance_rate": report.summary.get("compliance_rate", 0),
+                "total_clauses": report.summary.get("total_clauses", 0),
+                "gaps_analyzed": 0,
+            },
+        }
+
+    gap_text = json.dumps(gaps, indent=2)
+    user_prompt = (
+        f"Company: {report.document_metadata.filename or 'Unknown'}\n"
+        f"Framework: {report.framework.value}\n"
+        f"Current compliance rate: {(report.summary.get('compliance_rate', 0) * 100):.1f}%\n"
+        f"Total clauses: {report.summary.get('total_clauses', 0)}\n"
+        f"Supported: {report.summary.get('supported', 0)}, "
+        f"Partial: {report.summary.get('partial', 0)}, "
+        f"Not supported: {report.summary.get('not_supported', 0)}\n\n"
+        f"Gap clauses to analyze:\n{gap_text}"
+    )
+
+    try:
+        completion = compliance_pipeline.llm_client.chat.completions.create(
+            model=compliance_pipeline.llm_model,
+            messages=[
+                {"role": "system", "content": ACTION_PLAN_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+        )
+        raw = completion.choices[0].message.content.strip()
+
+        # Strip markdown code fences if the model wraps them
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3].rstrip()
+
+        plan = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.error("Action plan LLM returned invalid JSON:\n%s", raw[:500])
+        raise HTTPException(status_code=502, detail="LLM returned invalid JSON for action plan")
+    except Exception as e:
+        logger.error("Action plan generation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Action plan generation failed: {e}")
+
+    plan["report_meta"] = {
+        "framework": report.framework.value,
+        "compliance_rate": report.summary.get("compliance_rate", 0),
+        "total_clauses": report.summary.get("total_clauses", 0),
+        "gaps_analyzed": len(gaps),
+    }
+
+    # Cache and persist
+    action_plans[report_id] = plan
+    save_action_plans()
+
+    return plan
+
+
+@app.get("/compliance/reports/{report_id}/action-plan/pdf")
+async def download_action_plan_pdf(report_id: str):
+    """Download the cached action plan as a formatted PDF."""
+    if report_id not in compliance_reports:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report_id not in action_plans:
+        raise HTTPException(status_code=404, detail="No action plan generated yet")
+
+    report = compliance_reports[report_id]
+    plan = action_plans[report_id]
+
+    try:
+        pdf_bytes = generate_action_plan_pdf(
+            plan,
+            filename=report.document_metadata.filename or "report",
+            framework=report.framework.value,
+        )
+    except Exception as e:
+        logger.error("Action plan PDF generation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {e}")
+
+    safe_name = (report.document_metadata.filename or "report").replace(" ", "_").replace(".pdf", "")
+    download_name = f"{safe_name}_{report.framework.value}_Action_Plan.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
+    )
 
 
 # ============= Accuracy & Benchmarking =============

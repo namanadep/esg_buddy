@@ -82,22 +82,21 @@ const LiveEvaluation = ({ documentId, framework, documentFilename, onClose }) =>
   }, [])
 
   useEffect(() => {
-    let cancelled = false
+    const controller = new AbortController()
     ;(async () => {
       try {
         await streamEvaluation(documentId, framework, documentFilename, (ev, data) => {
-          if (!cancelled) handleEvent(ev, data)
-        })
-        // Stream ended — if we never got a 'done' event, that's unexpected
+          if (!controller.signal.aborted) handleEvent(ev, data)
+        }, { signal: controller.signal })
       } catch (err) {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setErrorMsg(err?.message || 'Stream connection failed')
           setPhase('error')
         }
       }
     })()
     return () => {
-      cancelled = true
+      controller.abort()
     }
   }, [documentId, framework, documentFilename, handleEvent])
 
