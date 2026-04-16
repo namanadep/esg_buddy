@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft,
@@ -25,13 +25,15 @@ import {
   EyeOff,
   ExternalLink,
   Copy,
-  Check
+  Check,
+  Trash2
 } from 'lucide-react'
-import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation, getAccuracyMetrics, downloadCompliancePdf, getDocumentFileUrl } from '../lib/api'
+import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation, getAccuracyMetrics, downloadCompliancePdf, getDocumentFileUrl, deleteComplianceReport } from '../lib/api'
 import ReportChat from '../components/ReportChat'
 
 const ReportDetail = () => {
   const { reportId } = useParams()
+  const navigate = useNavigate()
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -48,6 +50,8 @@ const ReportDetail = () => {
   const [loadingVerificationDetail, setLoadingVerificationDetail] = useState(false)
   const [groundTruthExpanded, setGroundTruthExpanded] = useState(false)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [deletingReport, setDeletingReport] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [previewEvidenceId, setPreviewEvidenceId] = useState(null)
   const [copiedEvidenceId, setCopiedEvidenceId] = useState(null)
 
@@ -84,6 +88,18 @@ const ReportDetail = () => {
       console.error('PDF download failed:', err)
     } finally {
       setDownloadingPdf(false)
+    }
+  }
+
+  const handleDeleteReport = async () => {
+    setDeletingReport(true)
+    try {
+      await deleteComplianceReport(reportId)
+      navigate('/reports')
+    } catch (err) {
+      console.error('Delete failed:', err)
+      setDeletingReport(false)
+      setShowDeleteConfirm(false)
     }
   }
 
@@ -331,18 +347,27 @@ const ReportDetail = () => {
                 <div className="text-sm text-ink-500 font-medium mb-3">
                   Overall Compliance
                 </div>
-                <button
-                  onClick={handleDownloadPdf}
-                  disabled={downloadingPdf}
-                  className="inline-flex items-center space-x-2 px-4 py-2 bg-forest-600 text-white text-sm font-semibold rounded-xl hover:bg-forest-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                >
-                  {downloadingPdf ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Download className="w-4 h-4" />
-                  )}
-                  <span>{downloadingPdf ? 'Generating...' : 'Download PDF'}</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleDownloadPdf}
+                    disabled={downloadingPdf}
+                    className="inline-flex items-center space-x-2 px-4 py-2 bg-forest-600 text-white text-sm font-semibold rounded-xl hover:bg-forest-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    {downloadingPdf ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                    <span>{downloadingPdf ? 'Generating...' : 'Download PDF'}</span>
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="inline-flex items-center space-x-2 px-4 py-2 bg-red-50 text-red-700 text-sm font-semibold rounded-xl border border-red-200 hover:bg-red-100 transition-colors shadow-sm"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete</span>
+                  </button>
+                </div>
               </div>
             </div>
             
@@ -1026,6 +1051,60 @@ const ReportDetail = () => {
           </div>
         </motion.div>
       </div>
+
+      {/* Delete confirmation modal */}
+      <AnimatePresence>
+        {showDeleteConfirm && (
+          <motion.div
+            key="delete-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-ink-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', stiffness: 280, damping: 26 }}
+              className="bg-white rounded-2xl shadow-2xl border border-ink-200 w-full max-w-md p-6"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5 text-red-600" />
+                </div>
+                <h3 className="font-display font-bold text-lg text-ink-900">Delete this report?</h3>
+              </div>
+              <p className="text-sm text-ink-600 mb-6">
+                This will permanently delete the compliance report for{' '}
+                <strong>{report?.document_metadata?.filename || report?.document_filename}</strong>.
+                This action cannot be undone.
+              </p>
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={deletingReport}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold text-ink-700 bg-clay-100 hover:bg-clay-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteReport}
+                  disabled={deletingReport}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {deletingReport ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                  {deletingReport ? 'Deleting...' : 'Delete report'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Floating RAG chat panel — ask questions about the source PDF */}
       <ReportChat

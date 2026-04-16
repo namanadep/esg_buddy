@@ -610,11 +610,148 @@ def _gri_clause_resolver(clause_id: str):
     }
 
 
+@app.post("/compliance/evaluate/stream")
+async def evaluate_compliance_stream(request: ClauseMatchRequest, background_tasks: BackgroundTasks):
+    """
+    Streaming compliance evaluation via Server-Sent Events.
+
+    Emits:
+      event: init     — { total, framework, document }
+      event: clause   — { index, clause_id, title, section, status, supported, partial, not_supported }
+      event: done     — { report_id, summary }
+      event: error    — { message }
+    """
+    # ── validation (same as blocking endpoint) ────────────────────────
+    if request.document_id not in documents_metadata:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if request.clause_ids:
+        all_clauses = parsed_clauses.get('all', [])
+        clauses = [c for c in all_clauses if c.clause_id in request.clause_ids]
+    else:
+        clauses = parsed_clauses.get(request.framework.value, [])
+
+    if not clauses:
+        raise HTTPException(status_code=400, detail="No clauses found for evaluation")
+
+    metadata = documents_metadata[request.document_id]
+    if request.document_filename and request.document_filename.strip():
+        metadata = metadata.model_copy(update={"filename": request.document_filename.strip()})
+
+    def _sse(event: str, data: dict) -> str:
+        """Format one SSE frame."""
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    async def _generate():
+        yield _sse("init", {
+            "total": len(clauses),
+            "framework": request.framework.value,
+            "document": metadata.filename,
+        })
+
+        evaluations: list = []
+        batch_size = settings.parallel_clause_evaluation
+        completed = 0
+        counts = {"supported": 0, "partial": 0, "not_supported": 0}
+
+        try:
+            for i in range(0, len(clauses), batch_size):
+                batch = clauses[i:i + batch_size]
+
+                # Fire all tasks in this batch then yield as each finishes.
+                task_map: dict = {}
+                pending = set()
+                for clause in batch:
+                    task = asyncio.create_task(
+                        compliance_pipeline.evaluate_clause_async(request.document_id, clause)
+                    )
+                    task_map[task] = clause
+                    pending.add(task)
+
+                while pending:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        clause = task_map[task]
+                        try:
+                            evaluation = task.result()
+                        except Exception as exc:
+                            logger.error("Clause %s failed: %s", clause.clause_id, exc)
+                            evaluation = compliance_pipeline._create_error_evaluation(clause, str(exc))
+
+                        evaluations.append(evaluation)
+                        completed += 1
+
+                        status_str = evaluation.final_status.value
+                        if status_str in counts:
+                            counts[status_str] += 1
+
+                        yield _sse("clause", {
+                            "index": completed - 1,
+                            "clause_id": evaluation.clause_id,
+                            "title": clause.title,
+                            "section": clause.section or "",
+                            "status": status_str,
+                            "supported": counts["supported"],
+                            "partial": counts["partial"],
+                            "not_supported": counts["not_supported"],
+                        })
+
+            # ── Build & save report (same as blocking endpoint) ───────
+            summary = compliance_pipeline._generate_summary(evaluations)
+            report = ComplianceReport(
+                report_id=f"report_{request.document_id}_{request.framework.value}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                document_id=request.document_id,
+                document_metadata=metadata,
+                framework=request.framework,
+                evaluations=evaluations,
+                summary=summary,
+            )
+            compliance_reports[report.report_id] = report
+            save_compliance_reports()
+
+            # Fire-and-forget background tasks (GRI ground truth, etc.)
+            if (
+                settings.auto_generate_gri_ground_truth
+                and report.framework == ESGFramework.GRI
+                and settings.openai_api_key
+                and company_from_filename(report.document_metadata.filename or "")
+            ):
+                backend_root = Path(__file__).resolve().parent.parent
+                project_root = backend_root.parent
+                background_tasks.add_task(
+                    run_auto_gri_ground_truth_after_evaluation,
+                    report,
+                    upload_dir=_resolve_upload_dir(),
+                    project_root=project_root,
+                    openai_api_key=settings.openai_api_key,
+                    clause_resolver=_gri_clause_resolver,
+                    llm_model=os.getenv("GRI_GT_LLM_MODEL") or settings.llm_model,
+                )
+
+            yield _sse("done", {
+                "report_id": report.report_id,
+                "summary": summary,
+            })
+        except Exception as exc:
+            logger.error("Streaming evaluation error: %s", exc)
+            yield _sse("error", {"message": str(exc)})
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/compliance/evaluate")
 async def evaluate_compliance(request: ClauseMatchRequest, background_tasks: BackgroundTasks):
     """
     Evaluate a document against ESG clauses
-    
+
     This is the main compliance evaluation endpoint
     """
     logger.info(f"Evaluating compliance for document {request.document_id}, framework {request.framework.value}")
@@ -738,6 +875,44 @@ async def delete_all_compliance_reports():
         }
     except Exception as e:
         logger.error(f"Error clearing compliance reports: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/compliance/reports/{report_id}")
+async def delete_single_compliance_report(report_id: str):
+    """Delete a single compliance report by ID."""
+    if report_id not in compliance_reports:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    try:
+        report = compliance_reports[report_id]
+        doc_id = report.document_id
+        del compliance_reports[report_id]
+        save_compliance_reports()
+
+        # Prune ground-truth keys tied to this report's document (only if no other
+        # reports reference that document)
+        other_docs = {r.document_id for r in compliance_reports.values()}
+        gt_removed = 0
+        if doc_id not in other_docs:
+            gt = accuracy_evaluator.ground_truth
+            keys_to_remove = [
+                k for k, label in list(gt.items()) if label.document_id == doc_id
+            ]
+            for k in keys_to_remove:
+                del gt[k]
+            gt_removed = len(keys_to_remove)
+
+        logger.info("Deleted report %s (gt keys removed: %s)", report_id, gt_removed)
+        return {
+            "message": "Report deleted",
+            "report_id": report_id,
+            "ground_truth_keys_removed": gt_removed,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error deleting report %s: %s", report_id, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

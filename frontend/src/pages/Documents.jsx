@@ -14,7 +14,8 @@ import {
   ChevronDown,
   SlidersHorizontal
 } from 'lucide-react'
-import { listDocuments, deleteDocument, evaluateCompliance } from '../lib/api'
+import { listDocuments, deleteDocument } from '../lib/api'
+import LiveEvaluation from '../components/LiveEvaluation'
 
 /** Guess framework from filename for list filtering / badges (no server field). */
 function inferFrameworkFromFilename(filename) {
@@ -52,7 +53,7 @@ const selectFieldClass =
 const Documents = () => {
   const [documents, setDocuments] = useState([])
   const [loading, setLoading] = useState(true)
-  const [evaluating, setEvaluating] = useState(null)
+  const [liveEval, setLiveEval] = useState(null) // { documentId, framework, filename }
   const [searchQuery, setSearchQuery] = useState('')
   const [frameworkFilter, setFrameworkFilter] = useState('all')
   const [sortBy, setSortBy] = useState('date_desc')
@@ -85,19 +86,12 @@ const Documents = () => {
     }
   }
   
-  const handleEvaluate = async (documentId, filename) => {
-    setEvaluating(documentId)
-    
-    try {
-      const result = await evaluateCompliance(documentId, selectedFramework, null, filename)
-      alert(`Evaluation started! Report ID: ${result.report_id}`)
-      // Could navigate to the report detail page
-    } catch (error) {
-      console.error('Error evaluating document:', error)
-      alert('Failed to start evaluation')
-    } finally {
-      setEvaluating(null)
-    }
+  const handleEvaluate = (documentId, filename) => {
+    setLiveEval({
+      documentId,
+      framework: selectedFramework,
+      filename,
+    })
   }
   
   const filteredDocuments = useMemo(() => {
@@ -395,15 +389,10 @@ const Documents = () => {
                       <div className="flex items-center space-x-2 ml-4">
                         <button
                           onClick={() => handleEvaluate(doc.document_id, doc.filename)}
-                          disabled={evaluating === doc.document_id}
-                          className="p-3 bg-forest-50 text-forest-600 hover:bg-forest-100 rounded-xl transition-colors disabled:opacity-50"
+                          className="p-3 bg-forest-50 text-forest-600 hover:bg-forest-100 rounded-xl transition-colors"
                           title="Run Compliance Evaluation"
                         >
-                          {evaluating === doc.document_id ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <Play className="w-5 h-5" />
-                          )}
+                          <Play className="w-5 h-5" />
                         </button>
                         
                         <button
@@ -416,20 +405,6 @@ const Documents = () => {
                       </div>
                     </div>
                     
-                    {evaluating === doc.document_id && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        className="mt-4 pt-4 border-t border-ink-100"
-                      >
-                        <div className="flex items-center space-x-3 text-sm">
-                          <Loader2 className="w-4 h-4 text-forest-600 animate-spin" />
-                          <span className="text-ink-600">
-                            Running compliance evaluation against {selectedFramework}...
-                          </span>
-                        </div>
-                      </motion.div>
-                    )}
                   </div>
                 </motion.div>
                 )
@@ -452,6 +427,16 @@ const Documents = () => {
           </motion.div>
         </motion.div>
       </div>
+
+      {/* Live streaming evaluation modal */}
+      {liveEval && (
+        <LiveEvaluation
+          documentId={liveEval.documentId}
+          framework={liveEval.framework}
+          documentFilename={liveEval.filename}
+          onClose={() => setLiveEval(null)}
+        />
+      )}
     </div>
   )
 }
