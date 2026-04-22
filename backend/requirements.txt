@@ -14,14 +14,10 @@ pdfplumber==0.10.3
 
 # Vector Database & Embeddings
 chromadb==0.4.22
-pysqlite3==0.6.0  # Fix for ChromaDB on Windows
-sentence-transformers==2.3.1
 openai==1.10.0
-httpx<0.28.0  # OpenAI 1.x passes 'proxies' to httpx; removed in httpx 0.28+
+httpx<0.28.0
 
-# NLP & ML
-transformers==4.37.2
-torch==2.1.2
+# NLP & ML (torch/transformers/sentence-transformers excluded — embeddings use OpenAI API)
 numpy==1.26.3
 scikit-learn==1.4.0
 

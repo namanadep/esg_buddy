@@ -3,10 +3,11 @@ ESGBuddy - Intelligent ESG Compliance Copilot
 Main FastAPI Application
 """
 
-# SQLite fix for ChromaDB on Windows
-__import__('pysqlite3')
+# SQLite fix for ChromaDB on Windows only
 import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+if sys.platform == "win32":
+    __import__('pysqlite3')
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 # Disable ChromaDB telemetry (avoids posthog errors)
 import os
