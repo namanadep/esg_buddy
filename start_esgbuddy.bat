@@ -1,24 +1,24 @@
 @echo off
-REM ESGBuddy - Start Backend and Frontend in separate terminals
-setlocal
-set "ROOT=%~dp0"
-set "ROOT=%ROOT:~0,-1%"
+title ESGBuddy
 
 echo Starting ESGBuddy...
 echo.
 
-REM Terminal 1: Backend (Python venv + Uvicorn)
-start "ESGBuddy Backend" cmd /k "cd /d "%ROOT%\backend" && call venv\Scripts\activate.bat && echo Backend running at http://localhost:8000 && echo API docs: http://localhost:8000/docs && echo. && echo To stop: press Ctrl+C twice, or run stop_esgbuddy.bat && echo. && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+:: Start backend
+echo [1/2] Starting backend (FastAPI)...
+start "ESGBuddy Backend" cmd /k "cd /d %~dp0backend && venv\Scripts\activate && uvicorn app.main:app --reload --port 8000"
 
-REM Wait a moment so backend starts first
+:: Small delay to let backend initialise
 timeout /t 3 /nobreak >nul
 
-REM Terminal 2: Frontend (Node)
-start "ESGBuddy Frontend" cmd /k "cd /d "%ROOT%\frontend" && echo Frontend running at http://localhost:3000 && echo. && npm run dev"
+:: Start frontend
+echo [2/2] Starting frontend (React)...
+start "ESGBuddy Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
 
 echo.
-echo Two windows opened:
-echo   - ESGBuddy Backend  (port 8000)
-echo   - ESGBuddy Frontend (port 3000)
+echo ESGBuddy is starting up.
+echo   Backend:  http://localhost:8000
+echo   Frontend: http://localhost:3000
 echo.
-echo Use stop_esgbuddy.bat to stop both.
+echo Close the two terminal windows to stop the app.
+pause

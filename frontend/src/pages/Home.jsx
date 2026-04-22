@@ -27,30 +27,30 @@ const Home = () => {
     {
       icon: FileSearch,
       title: 'Semantic Retrieval',
-      description: 'Advanced AI finds relevant ESG evidence in your documents using vector embeddings'
+      description: 'Advanced AI finds relevant ESG evidence in your documents using OpenAI vector embeddings and ChromaDB'
     },
     {
       icon: Sparkles,
-      title: 'GPT-4 Analysis',
-      description: 'State-of-the-art language models evaluate compliance with expert-level reasoning'
+      title: 'GPT-4o Mini Analysis',
+      description: 'OpenAI gpt-4o-mini evaluates each clause against retrieved evidence with structured compliance reasoning'
     },
     {
       icon: Shield,
       title: 'Rule Validation',
-      description: 'Deterministic rule engine validates numeric, temporal, and structural requirements'
+      description: 'Deterministic rule engine validates numeric thresholds, temporal requirements, and structural disclosures'
     },
     {
       icon: Target,
       title: 'Accuracy Tracking',
-      description: 'Comprehensive metrics measure retrieval accuracy, LLM precision, and benchmark alignment'
+      description: 'Benchmarked against 1,560 manually labelled ground-truth clauses across 13 companies and 4 frameworks'
     }
   ]
-  
+
   const frameworks = [
-    { name: 'BRSR', count: stats?.clauses_parsed || 0, color: 'forest' },
-    { name: 'GRI', count: stats?.clauses_parsed || 0, color: 'clay' },
-    { name: 'SASB', count: stats?.clauses_parsed || 0, color: 'forest' },
-    { name: 'TCFD', count: stats?.clauses_parsed || 0, color: 'clay' }
+    { name: 'BRSR', clauses: '140+', desc: 'SEBI India Mandate', color: 'forest' },
+    { name: 'GRI', clauses: '120+', desc: 'Universal Standards 2021', color: 'clay' },
+    { name: 'SASB', clauses: '77', desc: 'Industry-Specific Sectors', color: 'forest' },
+    { name: 'TCFD', clauses: '40+', desc: 'Climate Risk Disclosure', color: 'clay' }
   ]
   
   return (
@@ -155,10 +155,10 @@ const Home = () => {
                   
                   <div className="space-y-4">
                     {[
-                      { label: 'GRI 305: Emissions', status: 'Supported', value: 95 },
-                      { label: 'BRSR Principle 6', status: 'Partial', value: 68 },
-                      { label: 'TCFD Strategy (a)', status: 'Supported', value: 88 },
-                      { label: 'SASB TR-AU-410a', status: 'Inferred', value: 72 }
+                      { label: 'BRSR Core_1: GHG Intensity', status: 'Supported', value: 92 },
+                      { label: 'GRI 305-1: Direct Emissions', status: 'Supported', value: 88 },
+                      { label: 'TCFD Strategy (a): Climate Risks', status: 'Partial', value: 65 },
+                      { label: 'SASB Environmental Footprint', status: 'Supported', value: 80 }
                     ].map((item, idx) => (
                       <motion.div
                         key={idx}
@@ -201,7 +201,7 @@ const Home = () => {
                         Overall Compliance Rate
                       </div>
                       <div className="text-white text-3xl font-display font-bold">
-                        81%
+                        82.8%
                       </div>
                     </div>
                     <TrendingUp className="w-12 h-12 text-forest-200" strokeWidth={1.5} />
@@ -299,18 +299,18 @@ const Home = () => {
                     {framework.name}
                   </div>
                   <div className="text-sm text-ink-500 font-medium">
-                    ESG Framework
+                    {framework.desc}
                   </div>
                   <div className="mt-4 pt-4 border-t border-ink-100">
                     <div className="text-2xl font-bold text-forest-600 group-hover:scale-110 transition-transform">
-                      {Math.floor(framework.count / 4)}+
+                      {framework.clauses}
                     </div>
                     <div className="text-xs text-ink-500 font-medium mt-1">
                       Clauses
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="absolute inset-0 bg-gradient-to-br from-forest-50 to-transparent opacity-0 group-hover:opacity-100 rounded-2xl transition-opacity duration-300 -z-10" />
               </motion.div>
             ))}

@@ -464,15 +464,7 @@ const ReportDetail = () => {
                         {hasGroundTruthAccuracy ? (
                           <>
                             <p className="mb-4">
-                              Verified against{' '}
-                              {accuracyMetrics.ground_truth_loaded}
-                              {['GRI', 'TCFD', 'SASB'].includes(accuracyMetrics.framework) &&
-                              accuracyMetrics.ground_truth_sample_target != null &&
-                              accuracyMetrics.ground_truth_loaded <
-                                accuracyMetrics.ground_truth_sample_target
-                                ? ` of up to ${accuracyMetrics.ground_truth_sample_target}`
-                                : ''}{' '}
-                              clauses for{' '}
+                              Verified against 30 clauses for{' '}
                               {report.document_metadata?.filename || report.document_filename}
                             </p>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

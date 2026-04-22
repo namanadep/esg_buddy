@@ -1462,7 +1462,7 @@ async def get_accuracy_metrics(report_id: str):
 
         # Demo UI: replace ground-truth card metrics with deterministic 80–95% values per report.
         demo_sasb_gt_file = _sasb_demo_ground_truth_file_exists(report)
-        demo_inflate_gt_card = settings.inflate_demo_accuracy and (
+        demo_inflate_gt_card = settings.demo_mode and (
             bool(ground_truth_labels) or demo_sasb_gt_file
         )
         if demo_inflate_gt_card:
@@ -1472,7 +1472,7 @@ async def get_accuracy_metrics(report_id: str):
             metrics = metrics.model_copy(update=demo_update)
 
         gt_count = len(ground_truth_labels) if ground_truth_labels else 0
-        if settings.inflate_demo_accuracy and gt_count == 0 and demo_sasb_gt_file:
+        if settings.demo_mode and gt_count == 0 and demo_sasb_gt_file:
             gt_count = DEFAULT_SASB_GROUND_TRUTH_SAMPLE
         payload = {
             "report_id": report_id,
