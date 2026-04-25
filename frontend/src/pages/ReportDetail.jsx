@@ -31,7 +31,9 @@ import {
   Brain,
   GitBranch,
   RotateCcw,
-  SearchCheck
+  SearchCheck,
+  Search,
+  X
 } from 'lucide-react'
 import { getComplianceReport, getClauseEvaluationDetail, overrideClauseEvaluation, getAccuracyMetrics, downloadCompliancePdf, getDocumentFileUrl, deleteComplianceReport } from '../lib/api'
 import ReportChat from '../components/ReportChat'
@@ -47,6 +49,7 @@ const ReportDetail = () => {
   const [clauseDetail, setClauseDetail] = useState(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [filterStatus, setFilterStatus] = useState('all')
+  const [clauseSearch, setClauseSearch] = useState('')
   const [overridingClauseId, setOverridingClauseId] = useState(null)
   const [overrideReason, setOverrideReason] = useState({})
   const [accuracyMetrics, setAccuracyMetrics] = useState(null)
@@ -292,9 +295,18 @@ const ReportDetail = () => {
     }
   }
   
-  const filteredEvaluations = filterStatus === 'all' 
-    ? report.evaluations 
-    : report.evaluations.filter(e => e.final_status === filterStatus)
+  let filteredEvaluations = report.evaluations
+  if (filterStatus !== 'all') {
+    filteredEvaluations = filteredEvaluations.filter(e => e.final_status === filterStatus)
+  }
+  const _q = clauseSearch.trim().toLowerCase()
+  if (_q) {
+    filteredEvaluations = filteredEvaluations.filter(e =>
+      (e.clause?.title || '').toLowerCase().includes(_q) ||
+      (e.clause_id || '').toLowerCase().includes(_q) ||
+      (e.clause?.description || '').toLowerCase().includes(_q)
+    )
+  }
 
   const statusFilterOptions = ['all', 'supported', 'partial', 'not_supported']
 
@@ -668,7 +680,6 @@ const ReportDetail = () => {
                                               <div className="flex items-center justify-between gap-2">
                                                 <span className="text-xs text-ink-500">
                                                   Page {ev.page_number}
-                                                  {ev.similarity_score != null && ` • ${Math.round(ev.similarity_score * 100)}% match`}
                                                 </span>
                                                 {pdfUrl && (
                                                   <a
@@ -732,22 +743,61 @@ const ReportDetail = () => {
           </div>
           
           {/* Filters */}
-          <div className="bg-white rounded-xl shadow-lg border border-ink-200 p-4 mb-6">
-            <div className="flex items-center space-x-2">
-              <span className="text-sm font-medium text-ink-700 mr-2">Filter by status:</span>
-              {statusFilterOptions.map((status) => (
+          <div className="bg-white rounded-xl shadow-lg border border-ink-200 p-4 mb-6 space-y-3">
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search clauses by title, ID, or description…"
+                value={clauseSearch}
+                onChange={e => setClauseSearch(e.target.value)}
+                className="w-full pl-9 pr-9 py-2 text-sm border border-ink-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-forest-400 focus:border-transparent"
+              />
+              {clauseSearch && (
                 <button
-                  key={status}
-                  onClick={() => setFilterStatus(status)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                    filterStatus === status
-                      ? 'bg-forest-600 text-white shadow-lg'
-                      : 'bg-clay-100 text-ink-700 hover:bg-clay-200'
-                  }`}
+                  onClick={() => setClauseSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-400 hover:text-ink-700"
                 >
-                  {status === 'all' ? 'All' : status.replace('_', ' ')}
+                  <X className="w-4 h-4" />
                 </button>
-              ))}
+              )}
+            </div>
+            {/* Status pills + count */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-ink-700">Filter by status:</span>
+                {statusFilterOptions.map((status) => {
+                  const count = status === 'all'
+                    ? report.evaluations.length
+                    : report.evaluations.filter(e => e.final_status === status).length
+                  return (
+                    <button
+                      key={status}
+                      onClick={() => setFilterStatus(status)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                        filterStatus === status
+                          ? 'bg-forest-600 text-white shadow-md'
+                          : 'bg-clay-100 text-ink-700 hover:bg-clay-200'
+                      }`}
+                    >
+                      {status === 'all' ? 'All' : status === 'not_supported' ? 'Non-Compliant' : status.charAt(0).toUpperCase() + status.slice(1)}
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${filterStatus === status ? 'bg-white/20 text-white' : 'bg-ink-200 text-ink-600'}`}>
+                        {count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              {(filterStatus !== 'all' || clauseSearch) && (
+                <button
+                  onClick={() => { setFilterStatus('all'); setClauseSearch('') }}
+                  className="text-xs text-ink-500 hover:text-forest-600 flex items-center gap-1"
+                >
+                  <X className="w-3 h-3" /> Clear filters
+                  <span className="font-semibold text-ink-800 ml-1">{filteredEvaluations.length} shown</span>
+                </button>
+              )}
             </div>
           </div>
           
@@ -841,9 +891,6 @@ const ReportDetail = () => {
                                           Page {evidence.page_number}
                                           {evidence.section && ` • ${evidence.section}`}
                                         </span>
-                                        <span className="text-xs px-2 py-1 bg-forest-100 text-forest-700 rounded-full font-semibold">
-                                          {Math.round(evidence.similarity_score * 100)}% match
-                                        </span>
                                       </div>
                                       <p className="text-sm text-ink-700 leading-relaxed">
                                         {evidence.text}
@@ -856,9 +903,7 @@ const ReportDetail = () => {
                                             <button
                                               type="button"
                                               onClick={() =>
-                                                setPreviewEvidenceId(
-                                                  isPreviewOpen ? null : evidence.chunk_id
-                                                )
+                                                setPreviewEvidenceId(isPreviewOpen ? null : evidence.chunk_id)
                                               }
                                               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-forest-600 text-white text-xs font-semibold shadow-sm hover:bg-forest-700 transition-colors"
                                             >
@@ -920,12 +965,6 @@ const ReportDetail = () => {
                                           transition={{ duration: 0.25 }}
                                           className="border-t border-ink-200 bg-white"
                                         >
-                                          <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 flex items-start gap-2">
-                                            <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                                            <p className="text-xs text-amber-900 leading-snug">
-                                              Showing page <strong>{evidence.page_number}</strong> of the original PDF. Use <kbd className="px-1.5 py-0.5 rounded bg-white border border-amber-200 text-[10px] font-mono">Ctrl+F</kbd> inside the viewer and paste the copied text to highlight the exact passage.
-                                            </p>
-                                          </div>
                                           <iframe
                                             key={pageAnchor}
                                             src={pageAnchor}
@@ -1097,7 +1136,7 @@ const TimelineNode = ({ type, icon: Icon, label, children, isLast }) => {
 }
 
 const AgenticTimeline = ({ llm }) => {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   if (!llm) return null
 
   const hasSteps = llm.reasoning_steps?.length > 0
@@ -1157,18 +1196,6 @@ const AgenticTimeline = ({ llm }) => {
                       {llm.reasoning}
                     </p>
                   )}
-                  <div className="flex items-center gap-3 mt-3 pt-3 border-t border-forest-200/60">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-500">Confidence</span>
-                    <div className="flex-1 h-1.5 bg-forest-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-forest-500 transition-all"
-                        style={{ width: `${Math.round((llm.confidence ?? 0) * 100)}%` }}
-                      />
-                    </div>
-                    <span className="text-xs font-bold text-forest-700 tabular-nums">
-                      {Math.round((llm.confidence ?? 0) * 100)}%
-                    </span>
-                  </div>
                 </div>
               </TimelineNode>
 

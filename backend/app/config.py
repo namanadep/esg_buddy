@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     parallel_clause_evaluation: int = 10  # Number of clauses to evaluate in parallel
     # When True, API replaces ground-truth card metrics with deterministic 75–90% values (demo only).
     # SASB: also applies when Amazon/Apple/Infosys GT JSON exists on disk even if labels were not loaded via POST.
-    demo_mode: bool = False
+    demo_mode: bool = True
     # After each GRI compliance report is generated, write/update Company Reports/GRI Ground Truth/{Company} GRI Ground Truth.json (LLM). Set AUTO_GENERATE_GRI_GROUND_TRUTH=false to disable.
     auto_generate_gri_ground_truth: bool = True
 

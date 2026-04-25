@@ -115,7 +115,7 @@ const Reports = () => {
       }
     })
     return sorted
-  }, [reports, searchQuery, frameworkFilter, sortBy])
+  }, [reports, searchQuery, frameworkFilter, companyFilter, sortBy])
 
   const filtersActive =
     frameworkFilter !== 'all' || companyFilter !== 'all' || sortBy !== 'date_desc' || searchQuery.trim() !== ''
